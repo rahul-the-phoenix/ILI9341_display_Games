@@ -14,7 +14,8 @@ TFT_eSPI tft = TFT_eSPI();
 
 // Game Colors
 #define BG_COLOR     TFT_BLACK
-#define OBJECT_COLOR TFT_WHITE
+#define PIPE_COLOR   TFT_GREEN
+#define PIPE_CAP_COLOR TFT_DARKGREEN
 #define DETAIL_COLOR TFT_BLACK
 
 // Bird Colors
@@ -95,15 +96,22 @@ float birdY = 120, prevBirdY = 120;
 float velocity = 0, gravity = 0.18, flapPower = -2.5;
 int score = 0, highScore = 0;
 bool playing = false;
+bool isPaused = false;
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 200;
 int screenWidth, screenHeight;
 
-bool isAnyButtonPressed() {
-  return (!digitalRead(BTN_UP) || !digitalRead(BTN_DOWN) || 
-          !digitalRead(BTN_LEFT) || !digitalRead(BTN_RIGHT) ||
-          !digitalRead(BTN_A) || !digitalRead(BTN_B) ||
-          !digitalRead(BTN_START) || !digitalRead(BTN_SELECT));
+int animationFrame = 0;
+unsigned long lastAnimationUpdate = 0;
+
+// SELECT বাটন - ফ্ল্যাপ এবং রিজিউম করার জন্য
+bool isSelectButtonPressed() {
+  return (!digitalRead(BTN_SELECT));
+}
+
+// START বাটন - শুধুমাত্র পজ করার জন্য
+bool isStartButtonPressed() {
+  return (!digitalRead(BTN_START));
 }
 
 void showStartScreen();
@@ -114,6 +122,8 @@ void createPipe(int index, float startX);
 int getRandomDistance();
 void initDots();
 void updateDots();
+void showPauseOverlay();
+void hidePauseOverlay();
 
 void setup() {
   Serial.begin(115200);
@@ -132,7 +142,7 @@ void setup() {
   screenWidth = tft.width();
   screenHeight = tft.height();
   tft.fillScreen(BG_COLOR);
-  tft.setTextColor(OBJECT_COLOR);
+  tft.setTextColor(PIPE_COLOR);
   
   randomSeed(analogRead(0));
   initDots();
@@ -144,21 +154,18 @@ void initDots() {
   for (int i = 0; i < MAX_DOTS; i++) {
     bgDots[i].x = random(0, screenWidth);
     bgDots[i].y = random(0, screenHeight);
-    bgDots[i].speed = random(3, 12) / 10.0;  // 0.3 to 1.2 speed
-    bgDots[i].brightness = random(40, 180);  // Different brightness levels
+    bgDots[i].speed = random(3, 12) / 10.0;
+    bgDots[i].brightness = random(40, 180);
   }
 }
 
 // Update background dots
 void updateDots() {
   for (int i = 0; i < MAX_DOTS; i++) {
-    // Clear old dot position
     tft.drawPixel((int)bgDots[i].x, (int)bgDots[i].y, BG_COLOR);
     
-    // Move dot left
     bgDots[i].x -= bgDots[i].speed;
     
-    // Wrap around when off screen
     if (bgDots[i].x < 0) {
       bgDots[i].x = screenWidth;
       bgDots[i].y = random(0, screenHeight);
@@ -166,10 +173,50 @@ void updateDots() {
       bgDots[i].brightness = random(40, 180);
     }
     
-    // Draw new dot with grayscale color
     uint16_t dotColor = tft.color565(bgDots[i].brightness, bgDots[i].brightness, bgDots[i].brightness);
     tft.drawPixel((int)bgDots[i].x, (int)bgDots[i].y, dotColor);
   }
+}
+
+
+void showPauseOverlay() {
+  int centerX = screenWidth / 2;
+  
+  // Draw semi-transparent overlay effect (using a patterned rectangle)
+  // for (int i = 0; i < 100; i++) {
+  //   tft.drawPixel(centerX - 60 + random(0, 120), screenHeight/2 - 40 + random(0, 80), TFT_WHITE);
+  // }
+  
+  // Draw pause box (overlay on top of game)
+ // tft.fillRoundRect(centerX - 80, screenHeight/2 - 40, 160, 60, 10, TFT_BLUE);
+ // tft.drawRoundRect(centerX - 80, screenHeight/2 - 40, 160, 60, 10, TFT_WHITE);
+  
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(3);
+  tft.setCursor(centerX - 55, screenHeight/2 - 25);
+  tft.print("PAUSED!");
+  
+  // tft.setTextSize(1);
+  // tft.setCursor(centerX - 55, screenHeight/2);
+  // tft.print("PRESS START TO");
+  // tft.setCursor(centerX - 45, screenHeight/2 + 12);
+  // tft.print("RESUME");
+}
+
+void hidePauseOverlay() {
+  int centerX = screenWidth / 2;
+  
+  // Clear only the overlay area
+  tft.fillRoundRect(centerX - 80, screenHeight/2 - 40, 160, 60, 10, BG_COLOR);
+  
+  // Redraw the game area that was covered
+  tft.drawBitmap(60, (int)birdY, bird_body_bmp, 24, 18, BIRD_BODY_COLOR);
+  tft.drawBitmap(60, (int)birdY, bird_details_bmp, 24, 18, BIRD_DETAIL_COLOR);
+  
+  tft.setTextColor(TFT_RED);
+  tft.setTextSize(2);
+  tft.setCursor(screenWidth - 75, 8);
+  tft.print(score);
 }
 
 int getRandomDistance() {
@@ -178,11 +225,27 @@ int getRandomDistance() {
 
 void loop() {
   if (!playing) {
-    // Update dots on start screen too
     updateDots();
+    
+    if (millis() - lastAnimationUpdate > 500) {
+      lastAnimationUpdate = millis();
+      animationFrame = !animationFrame;
+      
+      tft.fillRect(40, 120, 180, 30, BG_COLOR);
+      tft.setTextSize(1);
+      tft.setTextColor(PIPE_COLOR);
+      tft.setCursor(40, 120);
+      if (animationFrame) {
+        tft.print("> Press SELECT to Start <");
+      } else {
+        tft.print("  Press SELECT to Start  ");
+      }
+    }
+    
     delay(30);
     
-    if (isAnyButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
+    // SELECT বাটন দিয়ে গেম শুরু
+    if (isSelectButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
       lastButtonPress = millis();
       delay(100);
       startGame();
@@ -190,7 +253,32 @@ void loop() {
     return;
   }
 
-  if (isAnyButtonPressed() && (millis() - lastButtonPress > 50)) {
+  // START বাটন দিয়ে পজ করা (শুধুমাত্র পজ)
+  if (!isPaused && isStartButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
+    lastButtonPress = millis();
+    isPaused = true;
+    showPauseOverlay();
+    delay(200);
+    return;
+  }
+  
+  // পজ মোডে SELECT বাটন দিয়ে রিজিউম (আনপজ)
+  if (isPaused && isSelectButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
+    lastButtonPress = millis();
+    isPaused = false;
+    hidePauseOverlay();
+    delay(200);
+    return;
+  }
+  
+  // পজ মোডে থাকলে গেম আপডেট করবেন না
+  if (isPaused) {
+    delay(50);
+    return;
+  }
+
+  // SELECT বাটন দিয়ে ফ্ল্যাপ করুন
+  if (isSelectButtonPressed() && (millis() - lastButtonPress > 50)) {
     lastButtonPress = millis();
     velocity = flapPower;
   }
@@ -248,8 +336,9 @@ void createPipe(int index, float startX) {
 
 void startGame() {
   tft.fillScreen(BG_COLOR);
-  initDots();  // Reset dots
+  initDots();
   score = 0; 
+  isPaused = false;
   birdY = screenHeight / 2;
   velocity = 0;
   
@@ -264,13 +353,10 @@ void startGame() {
 }
 
 void updateScreen() {
-  // 1. Update background dots FIRST (for parallax effect)
   updateDots();
   
-  // 2. Clear bird trail
   tft.fillRect(60, (int)prevBirdY, 28, 22, BG_COLOR);
   
-  // 3. Update pipes
   for (int i = 0; i < MAX_PIPES; i++) {
     int oldPipeEnd = pipes[i].x + PIPE_W + 5;
     if (oldPipeEnd > 0 && oldPipeEnd < screenWidth) {
@@ -278,27 +364,21 @@ void updateScreen() {
     }
     
     if (pipes[i].x < screenWidth && pipes[i].x + PIPE_W > 0) {
-      // Upper pipe
-      tft.fillRect(pipes[i].x, 0, PIPE_W, pipes[i].gapY, OBJECT_COLOR);
-      tft.fillRect(pipes[i].x - 3, pipes[i].gapY - CAP_H, PIPE_W + 6, CAP_H, OBJECT_COLOR);
+      tft.fillRect(pipes[i].x, 0, PIPE_W, pipes[i].gapY, PIPE_COLOR);
+      tft.fillRect(pipes[i].x - 3, pipes[i].gapY - CAP_H, PIPE_W + 6, CAP_H, PIPE_CAP_COLOR);
       
-      // Lower pipe
       int bottomY = pipes[i].gapY + pipes[i].gapH;
-      tft.fillRect(pipes[i].x, bottomY, PIPE_W, screenHeight - bottomY, OBJECT_COLOR);
-      tft.fillRect(pipes[i].x - 3, bottomY, PIPE_W + 6, CAP_H, OBJECT_COLOR);
+      tft.fillRect(pipes[i].x, bottomY, PIPE_W, screenHeight - bottomY, PIPE_COLOR);
+      tft.fillRect(pipes[i].x - 3, bottomY, PIPE_W + 6, CAP_H, PIPE_CAP_COLOR);
     }
   }
   
-  // 4. Draw bird
   tft.drawBitmap(60, (int)birdY, bird_body_bmp, 24, 18, BIRD_BODY_COLOR);
   tft.drawBitmap(60, (int)birdY, bird_details_bmp, 24, 18, BIRD_DETAIL_COLOR);
   
-  // 5. Draw score
-  tft.fillRect(screenWidth - 80, 5, 70, 20, BG_COLOR);
-  tft.setTextColor(OBJECT_COLOR);
+  tft.setTextColor(TFT_RED);
   tft.setTextSize(2);
   tft.setCursor(screenWidth - 75, 8);
-  tft.print("SCORE:");
   tft.print(score);
   
   tft.setTextSize(1);
@@ -307,58 +387,82 @@ void updateScreen() {
 void showStartScreen() {
   tft.fillScreen(BG_COLOR);
   
-  // Draw dots on start screen
   for (int i = 0; i < MAX_DOTS; i++) {
     uint16_t dotColor = tft.color565(bgDots[i].brightness, bgDots[i].brightness, bgDots[i].brightness);
     tft.drawPixel((int)bgDots[i].x, (int)bgDots[i].y, dotColor);
   }
   
-  tft.setTextColor(OBJECT_COLOR);
+  tft.fillRoundRect(40, 25, 240, 70, 15, PIPE_COLOR);
+  tft.setTextColor(BG_COLOR);
   tft.setTextSize(3);
-  tft.setCursor(35, 40);
+  tft.setCursor(85, 48);
   tft.print("FLAPPY");
-  tft.setCursor(50, 75);
+  tft.setCursor(100, 78);
   tft.print("BIRD");
   
+  tft.fillRoundRect(30, 110, 260, 85, 10, PIPE_CAP_COLOR);
+  tft.setTextColor(PIPE_COLOR);
   tft.setTextSize(1);
-  tft.setCursor(40, 120);
-  tft.print("Press ANY Button");
-  tft.setCursor(55, 135);
-  tft.print("to Start");
+  tft.setCursor(55, 128);
+  tft.print("HOW TO PLAY:");
+  tft.setCursor(40, 145);
+  tft.print("• Press SELECT to flap");
+  tft.setCursor(40, 160);
+  tft.print("• Press START to Pause");
+  tft.setCursor(40, 175);
+  tft.print("• Press SELECT to Resume");
   
   tft.setTextSize(1);
-  tft.setCursor(15, 170);
-  tft.print("Random Pipe Distance:");
-  tft.setCursor(30, 185);
-  tft.print("120 - 250 pixels");
-  tft.setCursor(45, 210);
-  tft.print("Good Luck!");
+  tft.setTextColor(PIPE_COLOR);
+  tft.setCursor(40, 210);
+  tft.print("Pipe Distance: 120-250px");
+  tft.setCursor(40, 225);
+  tft.print("High Score: ");
+  tft.print(highScore);
 }
 
 void gameOver() {
   playing = false;
+  isPaused = false;
   if (score > highScore) highScore = score;
   
   int centerX = screenWidth / 2;
   
-  tft.fillRoundRect(centerX - 90, 50, 180, 100, 10, OBJECT_COLOR);
+  for (int i = 0; i < 3; i++) {
+    tft.fillRoundRect(centerX - 100, 45, 200, 130, 15, PIPE_COLOR);
+    delay(100);
+    tft.fillRoundRect(centerX - 100, 45, 200, 130, 15, PIPE_CAP_COLOR);
+    delay(100);
+  }
+  
+  tft.fillRoundRect(centerX - 100, 45, 200, 130, 15, PIPE_COLOR);
   tft.setTextColor(BG_COLOR);
+  
   tft.setTextSize(2);
-  tft.setCursor(centerX - 65, 68);
+  tft.setCursor(centerX - 88, 68);
   tft.print("GAME OVER");
   
-  tft.setTextSize(1);
-  tft.setCursor(centerX - 55, 95);
-  tft.print("S: ");
+  tft.fillRect(centerX - 70, 95, 140, 50, BG_COLOR);
+  tft.setTextColor(PIPE_COLOR);
+  tft.setTextSize(2);
+  tft.setCursor(centerX - 60, 105);
+  tft.print("SCORE: ");
   tft.print(score);
   
-  tft.setCursor(centerX - 55, 115);
+  tft.setTextSize(1);
+  tft.setCursor(centerX - 45, 130);
   tft.print("BEST: ");
   tft.print(highScore);
   
   tft.setTextSize(1);
-  tft.setCursor(centerX - 60, 140);
-  tft.print("Press any key");
+  tft.setTextColor(BG_COLOR);
+  tft.setCursor(centerX - 75, 162);
+  tft.print("PRESS SELECT BUTTON");
   
-  delay(1500);
+  delay(500);
+  while (!isSelectButtonPressed()) {
+    delay(50);
+  }
+  delay(200);
+  showStartScreen();
 }
