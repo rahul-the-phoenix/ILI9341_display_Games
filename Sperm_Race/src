@@ -1,0 +1,404 @@
+#include <TFT_eSPI.h>
+#include <SPI.h>
+
+TFT_eSPI tft = TFT_eSPI();
+
+// --- Pin Configuration ---
+#define BTN_UP       13
+#define BTN_DOWN     12
+#define BTN_LEFT     27
+#define BTN_RIGHT    26
+#define BTN_SELECT   25
+
+// --- Colors ---
+#define BG_COLOR      0xFDCF   // Light Pink
+#define SPERM_WHITE   0xFFFF
+#define ENEMY_RED     0xF800
+#define HEAL_BLUE     0x001F
+#define BAR_COLOR     0x0000
+#define HEART_RED     0xF800
+#define WASTE_RED     0xB820   // Dark red/brown for period waste
+
+// --- Variables ---
+float playerX = 50, playerY = 150;
+float prevX = 50, prevY = 150;
+float moveSpeed = 5.5;  // Slightly faster for better control
+float gameSpeed = 2.5;
+unsigned long score = 0;
+unsigned long highScore = 0;
+int lives = 3;           
+bool dead = false;
+bool paused = false;
+unsigned long lastScoreUpdate = 0;
+unsigned long lastButtonPress = 0;
+unsigned long lastMoveUpdate = 0;
+
+// 6 Enemies
+struct Enemy { float x, y, prevX, prevY; };
+Enemy enemies[6];
+
+// --- Period Waste Particles (More visible) ---
+struct Particle { 
+  float x, y, prevX, prevY; 
+  float speed;
+  int size;  // Different sizes for variety
+};
+Particle waste[15];  // Increased to 15 particles
+
+float blueX, blueY, prevBlueX, prevBlueY;
+bool blueActive = false;
+unsigned long nextBlueSpawn = 5000; 
+float tailPhase = 0;
+
+bool isBlinking = false;
+bool isHealing = false; 
+unsigned long blinkTimer = 0;
+int blinkCount = 0;
+
+// Button debounce variables
+bool lastUpState = HIGH;
+bool lastDownState = HIGH;
+bool lastLeftState = HIGH;
+bool lastRightState = HIGH;
+
+float getSafeY(int index, int totalEnemies) {
+  float newY;
+  bool safe;
+  int attempts = 0;
+  do {
+    safe = true;
+    newY = random(35, 220);
+    attempts++;
+    for (int i = 0; i < totalEnemies; i++) {
+      if (i != index && abs(newY - enemies[i].y) < 28) {
+        safe = false;
+        break;
+      }
+    }
+  } while (!safe && attempts < 15);
+  return newY;
+}
+
+void setup() {
+  // Button pins with internal pullup
+  pinMode(BTN_UP, INPUT_PULLUP);
+  pinMode(BTN_DOWN, INPUT_PULLUP);
+  pinMode(BTN_LEFT, INPUT_PULLUP);
+  pinMode(BTN_RIGHT, INPUT_PULLUP);
+  pinMode(BTN_SELECT, INPUT_PULLUP);
+  
+  tft.init();
+  tft.setRotation(1);
+  tft.fillScreen(BG_COLOR);
+  resetGame();
+}
+
+void drawPixelHeart(int x, int y, uint16_t color) {
+  tft.fillRect(x + 1, y, 3, 1, color);
+  tft.fillRect(x + 5, y, 3, 1, color);
+  tft.fillRect(x, y + 1, 9, 3, color); 
+  tft.fillRect(x + 1, y + 4, 7, 1, color);
+  tft.fillRect(x + 2, y + 5, 5, 1, color);
+  tft.fillRect(x + 3, y + 6, 3, 1, color);
+  tft.drawPixel(x + 4, y + 7, color);
+}
+
+void updateHUD() {
+  tft.fillRect(0, 0, 320, 25, BAR_COLOR);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(5, 5);
+  tft.print("HI:"); tft.print(highScore);
+  
+  for(int i=0; i<lives; i++) {
+    int heartX = 90 + (i * 15); 
+    drawPixelHeart(heartX, 8, HEART_RED);
+  }
+  
+  tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(250, 5);
+  tft.print("S:"); tft.print(score);
+}
+
+void resetGame() {
+  if (score > highScore) highScore = score;
+  tft.fillScreen(BG_COLOR);
+  score = 0; 
+  lives = 3; 
+  gameSpeed = 2.5;
+  playerX = 50; 
+  playerY = 150;
+  dead = false; 
+  paused = false;
+  isBlinking = false; 
+  blueActive = false;
+  
+  // Initialize 6 enemies
+  for(int i=0; i<6; i++) {
+    enemies[i].x = 320 + (i * 55);
+    enemies[i].y = getSafeY(i, 6);
+    enemies[i].prevX = enemies[i].x;
+    enemies[i].prevY = enemies[i].y;
+  }
+
+  // Initialize period waste particles (more visible)
+  for(int i=0; i<15; i++) {
+    waste[i].x = random(0, 320);
+    waste[i].y = random(25, 230);
+    waste[i].speed = random(8, 25) / 10.0;  // Faster speed
+    waste[i].size = random(1, 3);  // Size 1-2 pixels
+  }
+  updateHUD();
+}
+
+void drawSperm(int x, int y, uint16_t color) {
+  tft.fillCircle(x, y, 8, color);
+  
+  if (color != BG_COLOR) {
+    tft.fillCircle(x + 2, y - 4, 2, TFT_BLACK); 
+    tft.fillCircle(x + 2, y + 4, 2, TFT_BLACK);
+    tft.fillCircle(x + 3, y - 5, 1, TFT_WHITE);
+    tft.fillCircle(x + 3, y + 3, 1, TFT_WHITE);
+  }
+  
+  for(int i=0; i<18; i++) {
+    int sY = y + sin(tailPhase + (i * 0.5)) * (i * 1.2);
+    int sX = x - 7 - (i * 1.5);
+    if(i < 12) {
+      tft.fillCircle(sX, sY, 2, color);
+    } else {
+      tft.drawPixel(sX, sY, color);
+    }
+  }
+}
+
+void drawWasteParticle(int x, int y, int size, uint16_t color) {
+  if(size == 1) {
+    tft.drawPixel(x, y, color);
+  } else if(size == 2) {
+    tft.fillRect(x-1, y-1, 2, 2, color);
+  } else {
+    tft.fillCircle(x, y, size-1, color);
+  }
+}
+
+void loop() {
+  // SELECT button with debounce
+  if (digitalRead(BTN_SELECT) == LOW && millis() - lastButtonPress > 300) {
+    lastButtonPress = millis();
+    if (dead) resetGame();
+    else {
+      paused = !paused; 
+      if (paused) {
+        tft.fillRoundRect(85, 100, 150, 40, 5, TFT_BLACK);
+        tft.drawRoundRect(85, 100, 150, 40, 5, TFT_WHITE);
+        tft.setTextColor(TFT_YELLOW);
+        tft.setTextSize(2);
+        tft.setCursor(115, 115); 
+        tft.print("PAUSED");
+        tft.setTextSize(1);
+      }
+      else { 
+        tft.fillScreen(BG_COLOR); 
+        updateHUD(); 
+      }
+    }
+  }
+
+  if (paused || dead) return;
+
+  // Score update
+  if (millis() - lastScoreUpdate > 250) {
+    score++;
+    lastScoreUpdate = millis();
+    updateHUD();
+    if (gameSpeed < 7.0) {  // Max speed limit
+      gameSpeed += 0.001;
+    }
+  }
+
+  // --- Period Waste Particles (More visible) ---
+  for(int i=0; i<15; i++) {
+    // Erase previous position
+    drawWasteParticle((int)waste[i].prevX, (int)waste[i].prevY, waste[i].size, BG_COLOR);
+    
+    waste[i].prevX = waste[i].x;
+    waste[i].prevY = waste[i].y;
+    waste[i].x -= waste[i].speed;
+    
+    if(waste[i].x < 0) {
+      waste[i].x = 320;
+      waste[i].y = random(25, 230);
+      waste[i].speed = random(8, 25) / 10.0;
+    }
+    
+    // Draw new position
+    drawWasteParticle((int)waste[i].x, (int)waste[i].y, waste[i].size, WASTE_RED);
+    
+    // Occasionally draw extra small dots around for blood effect
+    if(random(10) > 8) {
+      tft.drawPixel((int)waste[i].x + random(-2, 3), (int)waste[i].y + random(-2, 3), WASTE_RED);
+    }
+  }
+
+  // Smooth player movement with debounce
+  prevX = playerX; 
+  prevY = playerY;
+  
+  bool moving = false;
+  
+  if (digitalRead(BTN_UP) == LOW) {
+    playerY -= moveSpeed;
+    moving = true;
+  }
+  if (digitalRead(BTN_DOWN) == LOW) {
+    playerY += moveSpeed;
+    moving = true;
+  }
+  if (digitalRead(BTN_LEFT) == LOW) {
+    playerX -= moveSpeed;
+    moving = true;
+  }
+  if (digitalRead(BTN_RIGHT) == LOW) {
+    playerX += moveSpeed;
+    moving = true;
+  }
+
+  // Boundary limits
+  if (playerX < 25) playerX = 25;
+  if (playerX > 295) playerX = 295;
+  if (playerY < 35) playerY = 35; 
+  if (playerY > 225) playerY = 225;
+
+  drawSperm((int)prevX, (int)prevY, BG_COLOR);
+
+  // --- 6 Enemies (All active at once) ---
+  for(int i=0; i<6; i++) {
+    // Erase previous position
+    tft.fillCircle((int)enemies[i].prevX, (int)enemies[i].prevY, 10, BG_COLOR);
+    
+    enemies[i].prevX = enemies[i].x; 
+    enemies[i].prevY = enemies[i].y;
+    enemies[i].x -= gameSpeed;
+    
+    if (enemies[i].x < -15) { 
+      enemies[i].x = 335; 
+      enemies[i].y = getSafeY(i, 6); 
+    }
+    
+    // Draw enemy
+    tft.fillCircle((int)enemies[i].x, (int)enemies[i].y, 10, ENEMY_RED);
+    tft.fillCircle((int)enemies[i].x - 3, (int)enemies[i].y - 3, 2, TFT_BLACK);
+    tft.fillCircle((int)enemies[i].x + 3, (int)enemies[i].y - 3, 2, TFT_BLACK);
+    tft.fillCircle((int)enemies[i].x, (int)enemies[i].y + 2, 2, TFT_BLACK);
+
+    // Collision detection
+    float dx = playerX - enemies[i].x;
+    float dy = playerY - enemies[i].y;
+    if (dx*dx + dy*dy < 196 && !isBlinking) {
+      lives--;
+      updateHUD();
+      tft.fillCircle((int)enemies[i].x, (int)enemies[i].y, 12, BG_COLOR);
+      enemies[i].x = 335; 
+      enemies[i].y = getSafeY(i, 6);
+      
+      if (lives <= 0) {
+        gameOver();
+        return;
+      } else { 
+        isBlinking = true; 
+        isHealing = false; 
+        blinkCount = 0; 
+        blinkTimer = millis(); 
+      }
+    }
+  }
+
+  // Blue healing balls
+  if (!blueActive && millis() > nextBlueSpawn) {
+    blueActive = true; 
+    blueX = 335; 
+    blueY = random(35, 210);
+    prevBlueX = blueX;
+    prevBlueY = blueY;
+  }
+  
+  if (blueActive) {
+    tft.fillCircle((int)prevBlueX, (int)prevBlueY, 10, BG_COLOR);
+    prevBlueX = blueX; 
+    prevBlueY = blueY;
+    blueX -= (gameSpeed + 0.5);
+    
+    if (blueX < -15) { 
+      blueActive = false; 
+      nextBlueSpawn = millis() + random(5000, 10000); 
+    }
+    else {
+      tft.fillCircle((int)blueX, (int)blueY, 10, HEAL_BLUE);
+      tft.fillCircle((int)blueX, (int)blueY, 5, TFT_CYAN);
+      tft.fillCircle((int)blueX, (int)blueY, 2, TFT_WHITE);
+      
+      float bdx = playerX - blueX; 
+      float bdy = playerY - blueY;
+      if (bdx*bdx + bdy*bdy < 196 && !isBlinking) {
+        if(lives < 5) lives++; 
+        updateHUD();
+        blueActive = false;
+        tft.fillCircle((int)blueX, (int)blueY, 12, BG_COLOR);
+        nextBlueSpawn = millis() + random(8000, 12000);
+        isBlinking = true; 
+        isHealing = true; 
+        blinkCount = 0; 
+        blinkTimer = millis();
+      }
+    }
+  }
+
+  tailPhase += 0.5;
+  
+  // Blinking effect
+  if (isBlinking) {
+    if (millis() - blinkTimer > 80) { 
+      blinkTimer = millis(); 
+      blinkCount++; 
+    }
+    if (blinkCount < 6) {
+      uint16_t flashColor = (isHealing) ? 
+        ((blinkCount % 2 == 0) ? HEAL_BLUE : SPERM_WHITE) : 
+        ((blinkCount % 2 == 0) ? ENEMY_RED : SPERM_WHITE);
+      drawSperm((int)playerX, (int)playerY, flashColor);
+    } else { 
+      isBlinking = false; 
+      drawSperm((int)playerX, (int)playerY, SPERM_WHITE);
+    }
+  } else { 
+    drawSperm((int)playerX, (int)playerY, SPERM_WHITE); 
+  }
+  
+  delay(16);  // ~60 FPS for smooth movement
+}
+
+void gameOver() {
+  delay(500);
+  dead = true;
+  if (score > highScore) highScore = score;
+  tft.fillRoundRect(40, 70, 240, 100, 10, TFT_BLACK);
+  tft.drawRoundRect(40, 70, 240, 100, 10, TFT_WHITE);
+  tft.setTextColor(TFT_RED);
+  tft.setTextSize(3);
+  tft.setCursor(70, 85); 
+  tft.print("GAME OVER");
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(70, 115); 
+  tft.print("HI SCORE: "); 
+  tft.print(highScore);
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(70, 140); 
+  tft.print("SCORE: "); 
+  tft.print(score);
+  tft.setTextColor(0x07FF);
+  tft.setTextSize(1);
+  tft.setCursor(95, 160); 
+  tft.print("[ SELECT: RETRY ]");
+}
