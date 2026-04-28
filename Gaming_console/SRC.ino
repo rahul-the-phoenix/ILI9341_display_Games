@@ -173,6 +173,11 @@ void updateMenuSelection() {
                    TFT_RED);
 }
 
+void returnToMenu() {
+  currentGame = GAME_MENU;
+  showMenu();
+}
+
 // ============= SNAKE GAME FUNCTIONS =============
 void resetSnakeGame();
 void drawSnakePart(int index, bool erase);
@@ -355,8 +360,7 @@ void showSnakeGameOver() {
     delay(50);
   }
   delay(300);
-  currentGame = GAME_MENU;
-  showMenu();
+  returnToMenu();
 }
 
 void resetSnakeGame() {
@@ -393,13 +397,12 @@ void resetSnakeGame() {
 
 void runSnakeGame() {
   static unsigned long lastSelectPress = 0;
-  static unsigned long lastMenuPress = 0;
+  static unsigned long lastBPress = 0;
   
-  // Check for menu exit (long press SELECT + A)
-  if ((digitalRead(BTN_SELECT) == LOW && digitalRead(BTN_A) == LOW) && millis() - lastMenuPress > 500) {
-    lastMenuPress = millis();
-    currentGame = GAME_MENU;
-    showMenu();
+  // Check for menu exit (B button press)
+  if (digitalRead(BTN_B) == LOW && millis() - lastBPress > 300) {
+    lastBPress = millis();
+    returnToMenu();
     return;
   }
   
@@ -681,7 +684,7 @@ void showStartScreenFlappy() {
   tft.setCursor(40, 190);
   tft.print("• 3-2-1-GO! countdown");
   tft.setCursor(40, 205);
-  tft.print("• Press A+B to Menu");
+  tft.print("• Press B to Menu");
   
   tft.setTextSize(1);
   tft.setTextColor(PIPE_COLOR);
@@ -740,14 +743,13 @@ void flappyGameOver() {
 void runFlappyGame() {
   static unsigned long lastStartPress = 0;
   static unsigned long lastSelectPress = 0;
-  static unsigned long lastMenuPress = 0;
+  static unsigned long lastBPress = 0;
   
-  // Check for menu exit (long press A + B)
-  if ((digitalRead(BTN_A) == LOW && digitalRead(BTN_B) == LOW) && millis() - lastMenuPress > 500) {
-    lastMenuPress = millis();
+  // Check for menu exit (B button press)
+  if (digitalRead(BTN_B) == LOW && millis() - lastBPress > 300) {
+    lastBPress = millis();
     playing = false;
-    currentGame = GAME_MENU;
-    showMenu();
+    returnToMenu();
     return;
   }
   
@@ -916,7 +918,7 @@ void loop() {
       }
       
       // Handle A button to confirm selection
-      if (digitalRead(BTN_A) == LOW && millis() - lastButtonTime > 200) {
+      if (digitalRead(BTN_SELECT) == LOW && millis() - lastButtonTime > 200) {
         lastButtonTime = millis();
         if (selectedGame == 0) {
           currentGame = GAME_SNAKE;
