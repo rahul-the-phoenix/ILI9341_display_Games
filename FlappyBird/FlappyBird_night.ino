@@ -97,6 +97,9 @@ float velocity = 0, gravity = 0.18, flapPower = -2.5;
 int score = 0, highScore = 0;
 bool playing = false;
 bool isPaused = false;
+bool isCountdown = false;
+unsigned long countdownStartTime = 0;
+int countdownValue = 3;
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 200;
 int screenWidth, screenHeight;
@@ -124,6 +127,8 @@ void initDots();
 void updateDots();
 void showPauseOverlay();
 void hidePauseOverlay();
+void startCountdown();
+void updateCountdown();
 
 void setup() {
   Serial.begin(115200);
@@ -178,45 +183,62 @@ void updateDots() {
   }
 }
 
-
 void showPauseOverlay() {
   int centerX = screenWidth / 2;
-  
-  // Draw semi-transparent overlay effect (using a patterned rectangle)
-  // for (int i = 0; i < 100; i++) {
-  //   tft.drawPixel(centerX - 60 + random(0, 120), screenHeight/2 - 40 + random(0, 80), TFT_WHITE);
-  // }
-  
-  // Draw pause box (overlay on top of game)
- // tft.fillRoundRect(centerX - 80, screenHeight/2 - 40, 160, 60, 10, TFT_BLUE);
- // tft.drawRoundRect(centerX - 80, screenHeight/2 - 40, 160, 60, 10, TFT_WHITE);
   
   tft.setTextColor(TFT_WHITE);
   tft.setTextSize(3);
   tft.setCursor(centerX - 55, screenHeight/2 - 25);
   tft.print("PAUSED!");
-  
-  // tft.setTextSize(1);
-  // tft.setCursor(centerX - 55, screenHeight/2);
-  // tft.print("PRESS START TO");
-  // tft.setCursor(centerX - 45, screenHeight/2 + 12);
-  // tft.print("RESUME");
 }
 
 void hidePauseOverlay() {
   int centerX = screenWidth / 2;
   
   // Clear only the overlay area
-  tft.fillRoundRect(centerX - 80, screenHeight/2 - 40, 160, 60, 10, BG_COLOR);
+  tft.fillRect(centerX - 80, screenHeight/2 - 40, 160, 50, BG_COLOR);
+}
+
+void startCountdown() {
+  isCountdown = true;
+  countdownValue = 3;
+  countdownStartTime = millis();
+}
+
+void updateCountdown() {
+  if (!isCountdown) return;
   
-  // Redraw the game area that was covered
-  tft.drawBitmap(60, (int)birdY, bird_body_bmp, 24, 18, BIRD_BODY_COLOR);
-  tft.drawBitmap(60, (int)birdY, bird_details_bmp, 24, 18, BIRD_DETAIL_COLOR);
+  int centerX = screenWidth / 2;
+  int centerY = screenHeight / 2;
   
-  tft.setTextColor(TFT_RED);
-  tft.setTextSize(2);
-  tft.setCursor(screenWidth - 75, 8);
-  tft.print(score);
+  unsigned long elapsed = millis() - countdownStartTime;
+  int newCountdown = 4 - (elapsed / 1000);
+  
+  if (newCountdown != countdownValue && newCountdown >= 0) {
+    countdownValue = newCountdown;
+    
+    // Clear previous countdown number
+   tft.fillRect(centerX - 40, centerY - 30, 40, 30, BG_COLOR);
+    
+    // Show current countdown number
+    tft.setTextColor(TFT_YELLOW);
+    tft.setTextSize(4);
+    if (countdownValue > 0) {
+      tft.setCursor(centerX - 12, centerY - 20);
+      tft.print(countdownValue);
+     }// else if (countdownValue == 0) {
+    //   tft.setCursor(centerX - 28, centerY - 20);
+    //   tft.print("GO!");
+    // }
+  }
+  
+  // Countdown finished
+  if (elapsed >= 3000) {
+    // Clear countdown display
+    tft.fillRect(centerX - 40, centerY - 30, 80, 60, BG_COLOR);
+    isCountdown = false;
+    isPaused = false;
+  }
 }
 
 int getRandomDistance() {
@@ -254,7 +276,7 @@ void loop() {
   }
 
   // START বাটন দিয়ে পজ করা (শুধুমাত্র পজ)
-  if (!isPaused && isStartButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
+  if (!isPaused && !isCountdown && isStartButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
     lastButtonPress = millis();
     isPaused = true;
     showPauseOverlay();
@@ -262,12 +284,19 @@ void loop() {
     return;
   }
   
-  // পজ মোডে SELECT বাটন দিয়ে রিজিউম (আনপজ)
-  if (isPaused && isSelectButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
+  // পজ মোডে SELECT বাটন দিয়ে কাউন্টডাউন শুরু
+  if (isPaused && !isCountdown && isSelectButtonPressed() && (millis() - lastButtonPress > debounceDelay)) {
     lastButtonPress = millis();
-    isPaused = false;
-    hidePauseOverlay();
+    hidePauseOverlay();  // PAUSED লেখা মুছে ফেলুন
+    startCountdown();    // কাউন্টডাউন শুরু করুন
     delay(200);
+    return;
+  }
+  
+  // কাউন্টডাউন আপডেট করুন
+  if (isCountdown) {
+    updateCountdown();
+    delay(50);
     return;
   }
   
@@ -339,6 +368,7 @@ void startGame() {
   initDots();
   score = 0; 
   isPaused = false;
+  isCountdown = false;
   birdY = screenHeight / 2;
   velocity = 0;
   
@@ -400,7 +430,7 @@ void showStartScreen() {
   tft.setCursor(100, 78);
   tft.print("BIRD");
   
-  tft.fillRoundRect(30, 110, 260, 85, 10, PIPE_CAP_COLOR);
+  tft.fillRoundRect(30, 110, 260, 105, 10, PIPE_CAP_COLOR);
   tft.setTextColor(PIPE_COLOR);
   tft.setTextSize(1);
   tft.setCursor(55, 128);
@@ -411,12 +441,12 @@ void showStartScreen() {
   tft.print("• Press START to Pause");
   tft.setCursor(40, 175);
   tft.print("• Press SELECT to Resume");
+  tft.setCursor(40, 190);
+  tft.print("• 3-2-1-GO! countdown");
   
   tft.setTextSize(1);
   tft.setTextColor(PIPE_COLOR);
-  tft.setCursor(40, 210);
-  tft.print("Pipe Distance: 120-250px");
-  tft.setCursor(40, 225);
+  tft.setCursor(40, 215);
   tft.print("High Score: ");
   tft.print(highScore);
 }
@@ -424,6 +454,7 @@ void showStartScreen() {
 void gameOver() {
   playing = false;
   isPaused = false;
+  isCountdown = false;
   if (score > highScore) highScore = score;
   
   int centerX = screenWidth / 2;
