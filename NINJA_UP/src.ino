@@ -102,7 +102,7 @@ void loop() {
   }
   
   // Play/Pause functionality with START button
-  if (digitalRead(BTN_START) == LOW) {
+  if (digitalRead(BTN_START) == LOW  || digitalRead(BTN_SELECT) == LOW ) {
     delay(200);
     isPaused = !isPaused;
     
