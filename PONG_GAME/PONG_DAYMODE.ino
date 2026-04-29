@@ -13,8 +13,8 @@ TFT_eSPI tft = TFT_eSPI();
 #define TFT_HEIGHT   240
 
 // --- Game Area - পুরো স্ক্রীন ব্যবহার করে ---
-#define TOP_BOUNDARY    5
-#define BOTTOM_BOUNDARY 235
+#define TOP_BOUNDARY    25    // Red line থেকে শুরু (লাল লাইন পার হবে না)
+#define BOTTOM_BOUNDARY 232
 #define LEFT_BOUNDARY   8
 #define RIGHT_BOUNDARY  312
 
@@ -22,7 +22,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define COLOR_BG     TFT_BLACK
 #define COLOR_BOT    TFT_RED
 #define COLOR_YOU    TFT_CYAN
-#define COLOR_BALL   TFT_GREEN
+#define COLOR_BALL   TFT_YELLOW  // বল এখন হলুদ হবে, বেশি দেখা যাবে
 #define COLOR_GRID   0x4208
 #define COLOR_SNOW   0x7BEF
 
@@ -43,7 +43,7 @@ unsigned long lastSnowUpdate = 0;
 // --- Game Constants ---
 const int PADDLE_WIDTH = 5;
 const int PADDLE_HEIGHT = 45;
-const int BALL_SIZE = 4;
+const int BALL_SIZE = 6;  // বলের সাইজ বড় করা হলো (আগে ছিল 4)
 float ballSpeed = 1.6;
 float botSpeed = 1.4;
 bool gameActive = false;
@@ -57,14 +57,14 @@ void setup() {
   pinMode(BTN_SELECT, INPUT_PULLUP);
   
   tft.init();
-  tft.setRotation(1); // Landscape: 320x240 (পুরো স্ক্রীন)
+  tft.setRotation(1); // Landscape: 320x240
   tft.fillScreen(TFT_BLACK);
   
   // Initialize starting positions
   botY = TOP_BOUNDARY + (BOTTOM_BOUNDARY - TOP_BOUNDARY - PADDLE_HEIGHT) / 2;
   youY = botY;
   
-  // Initialize snowflakes (পুরো স্ক্রীনে)
+  // Initialize snowflakes
   for(int i = 0; i < 40; i++) {
     snowflakes[i].x = random(0, TFT_WIDTH);
     snowflakes[i].y = random(0, TFT_HEIGHT);
@@ -79,24 +79,21 @@ void drawSnow() {
   lastSnowUpdate = millis();
   
   for(int i = 0; i < 40; i++) {
-    // Erase old snow
     tft.drawPixel((int)snowflakes[i].x, (int)snowflakes[i].y, COLOR_BG);
     
-    // Update position
     snowflakes[i].y += snowflakes[i].speed;
     if(snowflakes[i].y >= TFT_HEIGHT) {
       snowflakes[i].y = 0;
       snowflakes[i].x = random(0, TFT_WIDTH);
     }
     
-    // Draw new snow
     tft.drawPixel((int)snowflakes[i].x, (int)snowflakes[i].y, COLOR_SNOW);
   }
 }
 
 void updateScoreUI() {
   // Clear top area
-  tft.fillRect(0, 0, TFT_WIDTH, 20, COLOR_BG);
+  tft.fillRect(0, 0, TFT_WIDTH, 22, COLOR_BG);
   
   tft.setTextSize(2);
   tft.setTextColor(TFT_ORANGE);
@@ -109,8 +106,9 @@ void updateScoreUI() {
   tft.print("SCORE:");
   tft.print(currentScore);
   
-  // Top boundary line
-  tft.drawFastHLine(0, 22, TFT_WIDTH, TFT_RED);
+  // Red boundary line - বল এই লাইন পার হবে না
+  tft.drawFastHLine(0, 23, TFT_WIDTH, TFT_RED);
+  tft.drawFastHLine(0, 24, TFT_WIDTH, TFT_RED);
 }
 
 void drawGameElements() {
@@ -119,7 +117,7 @@ void drawGameElements() {
                RIGHT_BOUNDARY - LEFT_BOUNDARY + 4, 
                BOTTOM_BOUNDARY - TOP_BOUNDARY + 4, TFT_WHITE);
   
-  // Center dashed line (পুরো স্ক্রীন লম্বা)
+  // Center dashed line
   for(int y = TOP_BOUNDARY; y < BOTTOM_BOUNDARY; y += 15) {
     tft.fillRect(TFT_WIDTH/2 - 2, y, 4, 8, COLOR_GRID);
   }
@@ -128,10 +126,12 @@ void drawGameElements() {
   tft.fillRect(LEFT_BOUNDARY, (int)botY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_BOT);
   tft.fillRect(RIGHT_BOUNDARY - PADDLE_WIDTH, (int)youY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_YOU);
   
-  // Draw ball
+  // Draw ball (বড় সাইজ)
   tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE, COLOR_BALL);
+  // বলের ভিতরে একটু ইফেক্ট
+  tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE-2, TFT_WHITE);
   
-  // Draw net effect
+  // Net effect
   tft.fillRect(TFT_WIDTH/2 - 1, TOP_BOUNDARY, 2, BOTTOM_BOUNDARY - TOP_BOUNDARY, 0x39E7);
 }
 
@@ -154,7 +154,6 @@ void gameOver() {
   
   tft.fillScreen(TFT_BLACK);
   
-  // Full screen game over panel
   int panelW = 260;
   int panelH = 130;
   int panelX = (TFT_WIDTH - panelW) / 2;
@@ -187,7 +186,6 @@ void gameOver() {
 void showStartScreen() {
   tft.fillScreen(TFT_BLACK);
   
-  // Full screen title animation
   tft.setTextSize(5);
   tft.setTextColor(COLOR_YOU);
   tft.setCursor(TFT_WIDTH/2 - 90, TFT_HEIGHT/2 - 40);
@@ -207,7 +205,6 @@ void showStartScreen() {
   tft.setCursor(TFT_WIDTH/2 - 65, TFT_HEIGHT - 30);
   tft.print("Survive to Score!");
   
-  // Animated snow on start screen
   for(int i = 0; i < 120; i++) {
     drawSnow();
     delay(15);
@@ -215,7 +212,6 @@ void showStartScreen() {
 }
 
 void loop() {
-  // Button handling with debounce
   if(digitalRead(BTN_SELECT) == LOW) {
     delay(60);
     if(digitalRead(BTN_SELECT) == LOW) {
@@ -274,7 +270,7 @@ void loop() {
     else botY -= botSpeed;
   }
   
-  // Keep boundaries
+  // Keep boundaries (TOP_BOUNDARY এখন 25, তাই লাল লাইন পার হবে না)
   if(botY < TOP_BOUNDARY) botY = TOP_BOUNDARY;
   if(botY > BOTTOM_BOUNDARY - PADDLE_HEIGHT) botY = BOTTOM_BOUNDARY - PADDLE_HEIGHT;
   if(youY < TOP_BOUNDARY) youY = TOP_BOUNDARY;
@@ -284,7 +280,7 @@ void loop() {
   ballX += ballDX;
   ballY += ballDY;
   
-  // Top/bottom collision
+  // Top/bottom collision (লাল লাইন পার হবে না)
   if(ballY - BALL_SIZE <= TOP_BOUNDARY) {
     ballY = TOP_BOUNDARY + BALL_SIZE;
     ballDY = abs(ballDY);
@@ -343,5 +339,5 @@ void loop() {
   // Draw everything
   drawGameElements();
   
-  delay(12); // Smooth 60+ FPS
+  delay(12);
 }
