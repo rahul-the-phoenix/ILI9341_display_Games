@@ -12,8 +12,8 @@ TFT_eSPI tft = TFT_eSPI();
 #define TFT_WIDTH    320
 #define TFT_HEIGHT   240
 
-// --- Game Area - পুরো স্ক্রীন ব্যবহার করে ---
-#define TOP_BOUNDARY    25    // Red line থেকে শুরু (লাল লাইন পার হবে না)
+// --- Game Area 
+#define TOP_BOUNDARY    25    
 #define BOTTOM_BOUNDARY 232
 #define LEFT_BOUNDARY   8
 #define RIGHT_BOUNDARY  312
@@ -22,7 +22,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define COLOR_BG     TFT_BLACK
 #define COLOR_BOT    TFT_RED
 #define COLOR_YOU    TFT_CYAN
-#define COLOR_BALL   TFT_YELLOW  // বল এখন হলুদ হবে, বেশি দেখা যাবে
+#define COLOR_BALL   TFT_YELLOW  
 #define COLOR_GRID   0x4208
 #define COLOR_SNOW   0x7BEF
 
@@ -43,7 +43,7 @@ unsigned long lastSnowUpdate = 0;
 // --- Game Constants ---
 const int PADDLE_WIDTH = 5;
 const int PADDLE_HEIGHT = 45;
-const int BALL_SIZE = 6;  // বলের সাইজ বড় করা হলো (আগে ছিল 4)
+const int BALL_SIZE = 6;  
 float ballSpeed = 1.6;
 float botSpeed = 1.4;
 bool gameActive = false;
@@ -106,13 +106,13 @@ void updateScoreUI() {
   tft.print("SCORE:");
   tft.print(currentScore);
   
-  // Red boundary line - বল এই লাইন পার হবে না
+  // Red boundary line
   tft.drawFastHLine(0, 23, TFT_WIDTH, TFT_RED);
   tft.drawFastHLine(0, 24, TFT_WIDTH, TFT_RED);
 }
 
 void drawGameElements() {
-  // Outer boundary (পুরো গেম এরিয়া)
+  // Outer boundary 
   tft.drawRect(LEFT_BOUNDARY-2, TOP_BOUNDARY-2, 
                RIGHT_BOUNDARY - LEFT_BOUNDARY + 4, 
                BOTTOM_BOUNDARY - TOP_BOUNDARY + 4, TFT_WHITE);
@@ -126,9 +126,9 @@ void drawGameElements() {
   tft.fillRect(LEFT_BOUNDARY, (int)botY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_BOT);
   tft.fillRect(RIGHT_BOUNDARY - PADDLE_WIDTH, (int)youY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_YOU);
   
-  // Draw ball (বড় সাইজ)
+  // Draw ball 
   tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE, COLOR_BALL);
-  // বলের ভিতরে একটু ইফেক্ট
+
   tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE-2, TFT_WHITE);
   
   // Net effect
@@ -270,7 +270,7 @@ void loop() {
     else botY -= botSpeed;
   }
   
-  // Keep boundaries (TOP_BOUNDARY এখন 25, তাই লাল লাইন পার হবে না)
+  // Keep boundaries 
   if(botY < TOP_BOUNDARY) botY = TOP_BOUNDARY;
   if(botY > BOTTOM_BOUNDARY - PADDLE_HEIGHT) botY = BOTTOM_BOUNDARY - PADDLE_HEIGHT;
   if(youY < TOP_BOUNDARY) youY = TOP_BOUNDARY;
@@ -280,7 +280,7 @@ void loop() {
   ballX += ballDX;
   ballY += ballDY;
   
-  // Top/bottom collision (লাল লাইন পার হবে না)
+  // Top/bottom collision 
   if(ballY - BALL_SIZE <= TOP_BOUNDARY) {
     ballY = TOP_BOUNDARY + BALL_SIZE;
     ballDY = abs(ballDY);
