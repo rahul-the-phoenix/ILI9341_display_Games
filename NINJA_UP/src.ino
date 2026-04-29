@@ -6,12 +6,12 @@ TFT_eSPI tft = TFT_eSPI();
 // Button Pins
 #define BTN_UP       13
 #define BTN_DOWN     12
-#define BTN_LEFT     27
-#define BTN_RIGHT    26
+#define BTN_LEFT     27      // LEFT বাটন - বাম সাইডে যাবে
+#define BTN_RIGHT    26      // RIGHT বাটন - ডান সাইডে যাবে
 #define BTN_A        14      
 #define BTN_B        33      
 #define BTN_START    32      // Play/Pause
-#define BTN_SELECT   25      // Start Game & Side Change
+#define BTN_SELECT   25      // Start Game
 
 // --- Colors (ILI9341 compatible) ---
 #define BG_COLOR     TFT_BLACK
@@ -54,16 +54,18 @@ Spike spikes[2];
 unsigned long score = 0;      
 unsigned long highScore = 0;
 bool playing = false;
-bool isPaused = false;        // NEW: Pause state
-float gameSpeed = 1.5; 
-bool buttonPressed = false; 
-unsigned long lastButtonPress = 0;
+bool isPaused = false;
+float gameSpeed = 2.5; 
+bool leftButtonPressed = false;
+bool rightButtonPressed = false;
+unsigned long lastLeftPress = 0;
+unsigned long lastRightPress = 0;
 const int debounceDelay = 50;
 
 // --- Power-up Settings ---
 bool isRushMode = false;
 unsigned long rushStartTime = 0;
-const long rushDuration = 8000; 
+const long rushDuration = 4000; 
 
 // --- Function Prototypes ---
 void showStartScreen();
@@ -74,7 +76,6 @@ void initDots();
 void screenShake();
 
 void setup() {
-  // Initialize button pins
   pinMode(BTN_A, INPUT_PULLUP);
   pinMode(BTN_B, INPUT_PULLUP);
   pinMode(BTN_START, INPUT_PULLUP);
@@ -85,7 +86,7 @@ void setup() {
   pinMode(BTN_RIGHT, INPUT_PULLUP);
   
   tft.init();
-  tft.setRotation(1);  // Landscape orientation (320x240)
+  tft.setRotation(1);
   tft.fillScreen(BG_COLOR);
   randomSeed(analogRead(0));
   showStartScreen();
@@ -93,7 +94,6 @@ void setup() {
 
 void loop() {
   if (!playing) {
-    // SELECT button to start game
     if (digitalRead(BTN_SELECT) == LOW) {
       delay(200); 
       startGame();
@@ -103,10 +103,9 @@ void loop() {
   
   // Play/Pause functionality with START button
   if (digitalRead(BTN_START) == LOW) {
-    delay(200); // Debounce
+    delay(200);
     isPaused = !isPaused;
     
-    // Show pause message
     if (isPaused) {
       tft.fillRoundRect(80, 90, 160, 60, 10, TFT_BLUE);
       tft.drawRoundRect(80, 90, 160, 60, 10, TFT_WHITE);
@@ -118,7 +117,6 @@ void loop() {
       tft.setCursor(120, 135);
       tft.print("START to Resume");
     } else {
-      // Clear pause message by redrawing game area
       tft.fillRect(80, 90, 160, 60, BG_COLOR);
     }
     delay(200);
@@ -129,7 +127,6 @@ void loop() {
   }
 }
 
-// --- Screen Shake Function ---
 void screenShake() {
   for (int i = 0; i < 5; i++) {
     tft.invertDisplay(true);
@@ -152,9 +149,9 @@ void startGame() {
   playerY = 100;
   playerSide = 0;
   score = 0;
-  gameSpeed = 1.5; 
+  gameSpeed = 2.5; 
   isRushMode = false;
-  isPaused = false;  // Reset pause state
+  isPaused = false;
   initDots(); 
 
   for(int i=0; i<TRAIL_SIZE; i++) {
@@ -174,15 +171,38 @@ void startGame() {
 }
 
 void updateGame() {
-  // SELECT button for side change (instead of BTN_A)
-  bool buttonState = (digitalRead(BTN_SELECT) == LOW);
+  // ===== LEFT এবং RIGHT বাটন দিয়ে সাইড কন্ট্রোল =====
+  bool leftState = (digitalRead(BTN_LEFT) == LOW);
+  bool rightState = (digitalRead(BTN_RIGHT) == LOW);
   
-  if (buttonState && !buttonPressed && (millis() - lastButtonPress > debounceDelay)) {
-    playerSide = 1 - playerSide; 
-    buttonPressed = true;
-    lastButtonPress = millis();
-  } else if (!buttonState) {
-    buttonPressed = false; 
+  // LEFT বাটন চাপলে বাম সাইডে যাবে
+  if (leftState && !leftButtonPressed && (millis() - lastLeftPress > debounceDelay)) {
+    playerSide = 0;  // বাম সাইড (0)
+    leftButtonPressed = true;
+    lastLeftPress = millis();
+    
+    // ভিজুয়াল ফিডব্যাক
+    tft.fillRect(10, 200, 80, 20, BG_COLOR);
+    tft.setTextColor(TFT_GREEN, BG_COLOR);
+    tft.setCursor(10, 200);
+    tft.print("LEFT SIDE");
+  } else if (!leftState) {
+    leftButtonPressed = false;
+  }
+  
+  // RIGHT বাটন চাপলে ডান সাইডে যাবে
+  if (rightState && !rightButtonPressed && (millis() - lastRightPress > debounceDelay)) {
+    playerSide = 1;  // ডান সাইড (1)
+    rightButtonPressed = true;
+    lastRightPress = millis();
+    
+    // ভিজুয়াল ফিডব্যাক
+    tft.fillRect(10, 200, 80, 20, BG_COLOR);
+    tft.setTextColor(TFT_GREEN, BG_COLOR);
+    tft.setCursor(10, 200);
+    tft.print("RIGHT SIDE");
+  } else if (!rightState) {
+    rightButtonPressed = false;
   }
 
   float currentEffectiveSpeed = gameSpeed;
@@ -199,7 +219,7 @@ void updateGame() {
     unsigned long elapsed = millis() - rushStartTime;
     if (elapsed < rushDuration) {
       if (elapsed <= 6000) {
-        currentEffectiveSpeed = gameSpeed * 3.5;
+        currentEffectiveSpeed = gameSpeed * 4.0;
         scoreMultiplier = 5;
         currentPlayerColor = BLUE_SPIKE;
       } else {
@@ -248,7 +268,6 @@ void updateGame() {
   tft.fillRect(wallX_Left, 0, wallThickness, 240, WALL_COLOR);
   tft.fillRect(wallX_Right, 0, wallThickness, 240, WALL_COLOR);
 
-  // Draw boundary lines for style
   tft.drawRect(wallX_Left - 1, 0, wallThickness + 2, 240, TFT_DARKGREY);
   tft.drawRect(wallX_Right - 1, 0, wallThickness + 2, 240, TFT_DARKGREY);
 
@@ -278,6 +297,7 @@ void updateGame() {
           rushStartTime = millis();
           spikes[i].y = 300;
         } else if (!isRushMode) {
+          delay(1000);
           gameOver();
           return;
         }
@@ -296,43 +316,58 @@ void updateGame() {
   // Draw player ninja
   if (showPlayer) {
     tft.fillRect(currentNinjaX, (int)playerY, playerW, playerH, currentPlayerColor);
-    // Add ninja details (eyes)
     tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + 6, 2, TFT_WHITE);
     tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + playerH - 6, 2, TFT_WHITE);
   }
 
-  // Display score
-  tft.setTextColor(WALL_COLOR, BG_COLOR);
+  // ===== স্কোর এবং হাই স্কোর ডিসপ্লে =====
+  tft.fillRect(220, 0, 100, 60, BG_COLOR);
+  
+  tft.setTextColor(TFT_GREEN, BG_COLOR);
   tft.setTextSize(1);
-  tft.setCursor(240, 10);
+  tft.setCursor(225, 10);
+  tft.print("SCORE");
+  
+  tft.setTextColor(TFT_YELLOW, BG_COLOR);
+  tft.setTextSize(2);
+  tft.setCursor(225, 22);
   char scoreBuf[15];
-  sprintf(scoreBuf, "S: %04lu", score / 10);
+  unsigned long displayScore = score / 10;
+  sprintf(scoreBuf, "%05lu", displayScore);
   tft.print(scoreBuf);
   
-  // Display high score
-  tft.setCursor(240, 35);
-  sprintf(scoreBuf, "BEST: %04lu", highScore);
+  tft.setTextColor(TFT_CYAN, BG_COLOR);
+  tft.setTextSize(1);
+  tft.setCursor(225, 45);
+  tft.print("BEST");
+  
+  tft.setTextColor(TFT_WHITE, BG_COLOR);
+  tft.setTextSize(1);
+  tft.setCursor(260, 45);
+  sprintf(scoreBuf, "%05lu", highScore);
   tft.print(scoreBuf);
   
-  // Display rush mode indicator
-  // if (isRushMode && (millis() - rushStartTime) < rushDuration) {
-  //   tft.setTextSize(1);
-  //   tft.setCursor(10, 10);
-  //   tft.setTextColor(TFT_YELLOW, BG_COLOR);
-  //   tft.print("RUSH MODE!");
+  // ===== রাশ মোড ইন্ডিকেটর =====
+  if (isRushMode && (millis() - rushStartTime) < rushDuration) {
+    tft.setTextSize(1);
+    tft.setCursor(10, 10);
+    tft.setTextColor(TFT_YELLOW, BG_COLOR);
+    tft.print("RUSH MODE!");
     
-  //   // Draw rush mode timer bar
-  //   int barWidth = 80;
-  //   int elapsedPercent = ((millis() - rushStartTime) * 100) / rushDuration;
-  //   tft.fillRect(10, 25, barWidth, 5, TFT_DARKGREY);
-  //   tft.fillRect(10, 25, barWidth - (barWidth * elapsedPercent / 100), 5, TFT_YELLOW);
-  // }
-
-  // // Show control hints
+    int barWidth = 80;
+    int elapsedPercent = ((millis() - rushStartTime) * 100) / rushDuration;
+    tft.fillRect(10, 25, barWidth, 5, TFT_DARKGREY);
+    tft.fillRect(10, 25, barWidth - (barWidth * elapsedPercent / 100), 5, TFT_RED);
+  }
+  
+  // ===== কন্ট্রোল হিন্টস (আপডেটেড) =====
   // tft.setTextSize(1);
-  // tft.setCursor(10, 230);
+  // tft.setCursor(10, 220);
   // tft.setTextColor(TFT_GREEN, BG_COLOR);
-  // tft.print("SELECT:Switch  START:Pause");
+  // tft.print("LEFT/RIGHT: Switch sides");
+  
+  // tft.setCursor(10, 230);
+  // tft.print("START: Pause");
   
   delay(10); 
 }
@@ -340,37 +375,34 @@ void updateGame() {
 void showStartScreen() {
   tft.fillScreen(BG_COLOR);
   
-  // Title
   tft.setTextColor(NINJA_COLOR);
   tft.setTextSize(3);
-  tft.setCursor(80, 50);
+  tft.setCursor(80, 40);
   tft.print("NINJA UP");
   
-  // Instructions
   tft.setTextColor(WALL_COLOR);
   tft.setTextSize(1);
-  tft.setCursor(50, 100);
+  tft.setCursor(40, 90);
   tft.print("SELECT button to START");
   
-  tft.setCursor(50, 120);
-  tft.print("SELECT also to SWITCH sides");
+  tft.setCursor(40, 110);
+  tft.print("LEFT/RIGHT to SWITCH sides");
   
-  tft.setCursor(50, 140);
+  tft.setCursor(40, 130);
   tft.print("START button to PAUSE/RESUME");
   
-  tft.setCursor(50, 160);
+  tft.setCursor(40, 150);
   tft.print("Avoid RED spikes!");
   
-  tft.setCursor(50, 180);
-  tft.print("Catch BLUE spikes for RUSH MODE!");
+  tft.setCursor(40, 170);
+  tft.print("Catch BLUE spikes for RUSH!");
   
   tft.setTextColor(TFT_YELLOW);
-  tft.setCursor(80, 210);
+  tft.setCursor(80, 200);
   tft.print("Press SELECT to begin");
   
-  // Draw decorative ninja star
-  tft.fillCircle(160, 230, 8, TFT_CYAN);
-  tft.fillCircle(160, 230, 4, BG_COLOR);
+  tft.fillCircle(160, 225, 8, TFT_CYAN);
+  tft.fillCircle(160, 225, 4, BG_COLOR);
 }
 
 void gameOver() {
@@ -380,7 +412,6 @@ void gameOver() {
   unsigned long currentScore = score / 10;
   if (currentScore > highScore) highScore = currentScore;
   
-  // Draw game over panel
   tft.fillRoundRect(40, 70, 240, 100, 10, TFT_RED);
   tft.drawRoundRect(40, 70, 240, 100, 10, TFT_WHITE);
   
