@@ -6,8 +6,8 @@ TFT_eSPI tft = TFT_eSPI();
 // Button Pins
 #define BTN_UP       13
 #define BTN_DOWN     12
-#define BTN_LEFT     27      // LEFT বাটন - বাম সাইডে যাবে
-#define BTN_RIGHT    26      // RIGHT বাটন - ডান সাইডে যাবে
+#define BTN_LEFT     27      
+#define BTN_RIGHT    26      
 #define BTN_A        14      
 #define BTN_B        33      
 #define BTN_START    32      // Play/Pause
@@ -171,11 +171,11 @@ void startGame() {
 }
 
 void updateGame() {
-  // ===== LEFT এবং RIGHT বাটন দিয়ে সাইড কন্ট্রোল =====
+  
   bool leftState = (digitalRead(BTN_LEFT) == LOW);
   bool rightState = (digitalRead(BTN_RIGHT) == LOW);
   
-  // LEFT বাটন চাপলে বাম সাইডে যাবে
+  
   if (leftState && !leftButtonPressed && (millis() - lastLeftPress > debounceDelay)) {
     playerSide = 0;
     leftButtonPressed = true;
@@ -185,7 +185,7 @@ void updateGame() {
     leftButtonPressed = false;
   }
   
-  // RIGHT বাটন চাপলে ডান সাইডে যাবে
+  
   if (rightState && !rightButtonPressed && (millis() - lastRightPress > debounceDelay)) {
     playerSide = 1;
     rightButtonPressed = true;
@@ -311,7 +311,7 @@ void updateGame() {
     tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + playerH - 6, 2, TFT_BLACK);
   }
 
-  // ===== স্কোর এবং হাই স্কোর ডিসপ্লে =====
+  
   tft.fillRect(220, 0, 100, 60, BG_COLOR);
   
   tft.setTextColor(TFT_GREEN, BG_COLOR);
@@ -340,32 +340,32 @@ void updateGame() {
 
 
     if (isRushMode && (millis() - rushStartTime) < rushDuration) {
-    // রাশ মোড টেক্সট
+    
     tft.setTextSize(1);
-    tft.setCursor(225, 200);  // 65 থেকে পরিবর্তন করে 200
+    tft.setCursor(225, 200);  
     tft.setTextColor(TFT_YELLOW, BG_COLOR);
     tft.print("RUSH!");
     
-    // রাশ মোড টাইমার বার
+    
     int barWidth = 80;
     int barX = 220;
-    int barY = 210;  // 75 থেকে পরিবর্তন করে 210
+    int barY = 210;  
     int elapsedPercent = ((millis() - rushStartTime) * 100) / rushDuration;
     
-    // ব্যাকগ্রাউন্ড বার
+    
     tft.fillRect(barX, barY, barWidth, 6, TFT_DARKGREY);
-    // রাশ মোড প্রগ্রেস বার (বাম থেকে ডানে কমবে)
+    
     tft.fillRect(barX, barY, barWidth - (barWidth * elapsedPercent / 100), 6, TFT_RED);
     
-    // রাশ মোড বাকী সময় দেখান
+    
     unsigned long remainingTime = (rushDuration - (millis() - rushStartTime)) / 1000;
     tft.setTextColor(TFT_WHITE, BG_COLOR);
-    tft.setCursor(225, 220);  // 85 থেকে পরিবর্তন করে 220
+    tft.setCursor(225, 220);  
     tft.print(remainingTime);
     tft.print("s");
   } else {
-    // রাশ মোড না থাকলে জায়গা পরিষ্কার করুন
-    tft.fillRect(220, 190, 100, 50, BG_COLOR);  // ক্লিয়ার এলাকা আপডেট
+    
+    tft.fillRect(220, 190, 100, 50, BG_COLOR);  
   }
   
 
