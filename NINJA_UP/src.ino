@@ -180,11 +180,7 @@ void updateGame() {
     playerSide = 0;
     leftButtonPressed = true;
     lastLeftPress = millis();
-    
-    tft.fillRect(10, 200, 80, 20, BG_COLOR);
-    tft.setTextColor(TFT_GREEN, BG_COLOR);
-    tft.setCursor(10, 200);
-    tft.print("LEFT SIDE");
+ 
   } else if (!leftState) {
     leftButtonPressed = false;
   }
@@ -195,10 +191,7 @@ void updateGame() {
     rightButtonPressed = true;
     lastRightPress = millis();
     
-    tft.fillRect(10, 200, 80, 20, BG_COLOR);
-    tft.setTextColor(TFT_GREEN, BG_COLOR);
-    tft.setCursor(10, 200);
-    tft.print("RIGHT SIDE");
+   
   } else if (!rightState) {
     rightButtonPressed = false;
   }
@@ -314,8 +307,8 @@ void updateGame() {
   // Draw player ninja
   if (showPlayer) {
     tft.fillRect(currentNinjaX, (int)playerY, playerW, playerH, currentPlayerColor);
-    tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + 6, 2, TFT_WHITE);
-    tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + playerH - 6, 2, TFT_WHITE);
+    tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + 6, 2, TFT_BLACK);
+    tft.fillCircle(currentNinjaX + playerW - 4, (int)playerY + playerH - 6, 2, TFT_BLACK);
   }
 
   // ===== স্কোর এবং হাই স্কোর ডিসপ্লে =====
@@ -344,7 +337,6 @@ void updateGame() {
   tft.setCursor(244, 62);
   sprintf(scoreBuf, "%04lu", highScore);
   tft.print(scoreBuf);
-  
 
 
     if (isRushMode && (millis() - rushStartTime) < rushDuration) {
