@@ -13,7 +13,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define TFT_HEIGHT   240
 
 // --- Game Area 
-#define TOP_BOUNDARY    25    
+#define TOP_BOUNDARY    25
 #define BOTTOM_BOUNDARY 232
 #define LEFT_BOUNDARY   8
 #define RIGHT_BOUNDARY  312
@@ -22,7 +22,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define COLOR_BG     TFT_BLACK
 #define COLOR_BOT    TFT_RED
 #define COLOR_YOU    TFT_CYAN
-#define COLOR_BALL   TFT_YELLOW  
+#define COLOR_BALL   TFT_GREEN
 #define COLOR_GRID   0x4208
 #define COLOR_SNOW   0x7BEF
 
@@ -30,7 +30,7 @@ TFT_eSPI tft = TFT_eSPI();
 struct Snow { 
   float x, y, speed; 
 };
-Snow snowflakes[40];
+Snow snowflakes[160];
 
 // --- Game Variables ---
 float ballX, ballY, ballDX, ballDY;
@@ -43,9 +43,9 @@ unsigned long lastSnowUpdate = 0;
 // --- Game Constants ---
 const int PADDLE_WIDTH = 5;
 const int PADDLE_HEIGHT = 45;
-const int BALL_SIZE = 6;  
-float ballSpeed = 1.6;
-float botSpeed = 1.4;
+const int BALL_SIZE = 6;
+float ballSpeed = 2.0;
+float botSpeed = 2.0;
 bool gameActive = false;
 bool gamePaused = false;
 
@@ -57,14 +57,12 @@ void setup() {
   pinMode(BTN_SELECT, INPUT_PULLUP);
   
   tft.init();
-  tft.setRotation(1); // Landscape: 320x240
+  tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
   
-  // Initialize starting positions
   botY = TOP_BOUNDARY + (BOTTOM_BOUNDARY - TOP_BOUNDARY - PADDLE_HEIGHT) / 2;
   youY = botY;
   
-  // Initialize snowflakes
   for(int i = 0; i < 40; i++) {
     snowflakes[i].x = random(0, TFT_WIDTH);
     snowflakes[i].y = random(0, TFT_HEIGHT);
@@ -92,7 +90,6 @@ void drawSnow() {
 }
 
 void updateScoreUI() {
-  // Clear top area
   tft.fillRect(0, 0, TFT_WIDTH, 22, COLOR_BG);
   
   tft.setTextSize(2);
@@ -105,33 +102,23 @@ void updateScoreUI() {
   tft.setCursor(TFT_WIDTH - 120, 2);
   tft.print("SCORE:");
   tft.print(currentScore);
-  
-  // Red boundary line
-  tft.drawFastHLine(0, 23, TFT_WIDTH, TFT_RED);
-  tft.drawFastHLine(0, 24, TFT_WIDTH, TFT_RED);
 }
 
 void drawGameElements() {
-  // Outer boundary 
   tft.drawRect(LEFT_BOUNDARY-2, TOP_BOUNDARY-2, 
                RIGHT_BOUNDARY - LEFT_BOUNDARY + 4, 
                BOTTOM_BOUNDARY - TOP_BOUNDARY + 4, TFT_WHITE);
   
-  // Center dashed line
   for(int y = TOP_BOUNDARY; y < BOTTOM_BOUNDARY; y += 15) {
     tft.fillRect(TFT_WIDTH/2 - 2, y, 4, 8, COLOR_GRID);
   }
   
-  // Draw paddles
   tft.fillRect(LEFT_BOUNDARY, (int)botY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_BOT);
   tft.fillRect(RIGHT_BOUNDARY - PADDLE_WIDTH, (int)youY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_YOU);
   
-  // Draw ball 
   tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE, COLOR_BALL);
-
-  tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE-2, TFT_WHITE);
+  tft.fillCircle((int)ballX, (int)ballY, BALL_SIZE-2, TFT_GREEN);
   
-  // Net effect
   tft.fillRect(TFT_WIDTH/2 - 1, TOP_BOUNDARY, 2, BOTTOM_BOUNDARY - TOP_BOUNDARY, 0x39E7);
 }
 
@@ -239,14 +226,12 @@ void loop() {
   
   if(!gameActive || gamePaused) return;
   
-  // Update score
-  if(millis() - lastScoreUpdate > 100) {
+  if(millis() - lastScoreUpdate > 250) {
     currentScore++;
     lastScoreUpdate = millis();
     updateScoreUI();
   }
   
-  // Save old positions
   int oldBallX = (int)ballX;
   int oldBallY = (int)ballY;
   int oldBotY = (int)botY;
@@ -260,19 +245,19 @@ void loop() {
     youY += 4.5;
   }
   
-  // Bot AI
-  float ballCenter = ballY;
-  float paddleCenter = botY + PADDLE_HEIGHT/2;
-  float error = ballCenter - paddleCenter;
+  // ========== PERFECT BOT AI - NEVER MISSES ==========
   
-  if(abs(error) > 3) {
-    if(error > 0) botY += botSpeed;
-    else botY -= botSpeed;
-  }
+  float targetBotY = ballY - (PADDLE_HEIGHT / 2);
   
-  // Keep boundaries 
-  if(botY < TOP_BOUNDARY) botY = TOP_BOUNDARY;
-  if(botY > BOTTOM_BOUNDARY - PADDLE_HEIGHT) botY = BOTTOM_BOUNDARY - PADDLE_HEIGHT;
+  // Keep within boundaries
+  if(targetBotY < TOP_BOUNDARY) targetBotY = TOP_BOUNDARY;
+  if(targetBotY > BOTTOM_BOUNDARY - PADDLE_HEIGHT) targetBotY = BOTTOM_BOUNDARY - PADDLE_HEIGHT;
+  
+  // Perfect instant tracking
+  botY = targetBotY;
+  // ===================================================
+  
+  // Keep player boundaries
   if(youY < TOP_BOUNDARY) youY = TOP_BOUNDARY;
   if(youY > BOTTOM_BOUNDARY - PADDLE_HEIGHT) youY = BOTTOM_BOUNDARY - PADDLE_HEIGHT;
   
@@ -280,7 +265,7 @@ void loop() {
   ballX += ballDX;
   ballY += ballDY;
   
-  // Top/bottom collision 
+  // Top/bottom collision
   if(ballY - BALL_SIZE <= TOP_BOUNDARY) {
     ballY = TOP_BOUNDARY + BALL_SIZE;
     ballDY = abs(ballDY);
@@ -290,7 +275,7 @@ void loop() {
     ballDY = -abs(ballDY);
   }
   
-  // Left paddle collision
+  // Left paddle collision (Bot)
   if(ballX - BALL_SIZE <= LEFT_BOUNDARY + PADDLE_WIDTH && 
      ballX + BALL_SIZE >= LEFT_BOUNDARY &&
      ballY + BALL_SIZE >= botY && 
@@ -306,7 +291,7 @@ void loop() {
     ballX = LEFT_BOUNDARY + PADDLE_WIDTH + BALL_SIZE;
   }
   
-  // Right paddle collision
+  // Right paddle collision (Player)
   if(ballX + BALL_SIZE >= RIGHT_BOUNDARY - PADDLE_WIDTH &&
      ballX - BALL_SIZE <= RIGHT_BOUNDARY &&
      ballY + BALL_SIZE >= youY &&
@@ -322,7 +307,7 @@ void loop() {
     ballX = RIGHT_BOUNDARY - PADDLE_WIDTH - BALL_SIZE;
   }
   
-  // Death condition
+  
   if(ballX + BALL_SIZE <= LEFT_BOUNDARY || ballX - BALL_SIZE >= RIGHT_BOUNDARY) {
     gameOver();
     return;
@@ -333,10 +318,7 @@ void loop() {
   tft.fillRect(RIGHT_BOUNDARY - PADDLE_WIDTH, oldYouY, PADDLE_WIDTH, PADDLE_HEIGHT, COLOR_BG);
   tft.fillCircle(oldBallX, oldBallY, BALL_SIZE, COLOR_BG);
   
-  // Update snow
   drawSnow();
-  
-  // Draw everything
   drawGameElements();
   
   delay(12);
