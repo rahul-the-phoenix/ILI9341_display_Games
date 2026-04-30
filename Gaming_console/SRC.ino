@@ -1,5 +1,6 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
+#include <EEPROM.h>
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -22,68 +23,82 @@ enum GameMode {
   GAME_TICTACTOE,
   GAME_RPS,
   GAME_NINJA,
-  GAME_PONG
+  GAME_PONG,
+  GAME_SPERMRACE,
+  GAME_CARRACING
 };
 
 GameMode currentGame = GAME_MENU;
-int selectedGame     = 0;   // 0..6
+int selectedGame     = 0;   // 0..8
 
 int screenWidth  = 320;
 int screenHeight = 240;
 
 // ============= MENU DESIGN CONSTANTS =============
+// SCROLLABLE MENU: shows 7 items at a time, scrolls when selectedGame moves out of view
 #define MENU_BG        0x0000
 #define MENU_HEADER_H  42
 #define MENU_ITEM_H    28
-#define MENU_ITEMS     7
+#define MENU_ITEMS     9          // total games
+#define MENU_VISIBLE   7          // visible at once (same as before — fits exactly)
 #define MENU_LIST_Y    (MENU_HEADER_H + 2)
-#define MENU_FOOTER_Y  (MENU_LIST_Y + MENU_ITEMS * MENU_ITEM_H + 2)
+#define MENU_FOOTER_Y  (MENU_LIST_Y + MENU_VISIBLE * MENU_ITEM_H + 2)
 
-const uint16_t GAME_ACCENT[7] = {
+int menuScrollOffset = 0;  // index of first visible item
+
+const uint16_t GAME_ACCENT[9] = {
   0x07E0,  // Snake      – Green
   0xFFE0,  // Flappy     – Yellow
   0xF81F,  // Connect4   – Magenta
   0x837F,  // TicTacToe  – Lavender
   0xFC00,  // RPS        – Orange
   0x07FF,  // Ninja Up   – Cyan
-  0xF800   // Pong       – Red
+  0xF800,  // Pong       – Red
+  0xFB9A,  // SpermRace  – Pink
+  0x02DF   // CarRacing  – Teal
 };
 
-const uint16_t GAME_DIM[7] = {
+const uint16_t GAME_DIM[9] = {
   0x0120,  // dim green
   0x2100,  // dim yellow
   0x2004,  // dim magenta
   0x1010,  // dim lavender
   0x2000,  // dim orange
   0x0208,  // dim cyan
-  0x2000   // dim red
+  0x2000,  // dim red
+  0x3009,  // dim pink
+  0x0108   // dim teal
 };
 
-const char* GAME_NAMES[7] = {
+const char* GAME_NAMES[9] = {
   "SNAKE",
   "FLAPPY BIRD",
   "CONNECT 4",
   "TIC TAC TOE",
   "ROCK PAPER SCISSORS",
   "NINJA UP",
-  "DINO PONG"
+  "DINO PONG",
+  "SPERM RACE",
+  "CAR RACING"
 };
 
-const char* GAME_TAGS[7] = {
+const char* GAME_TAGS[9] = {
   "EAT GROW SURVIVE",
   "TAP  FLY  DODGE",
   "CONNECT & BLOCK",
   "THINK & PLACE",
   "CHOOSE & DUEL",
   "SWITCH DODGE RUSH",
-  "RALLY SURVIVE WIN"
+  "RALLY SURVIVE WIN",
+  "DODGE & SURVIVE",
+  "RACE DODGE WIN"
 };
 
-const char* GAME_MODE_BADGE[7] = {
-  "1P", "1P", "BOT", "BOT", "BOT", "1P", "BOT"
+const char* GAME_MODE_BADGE[9] = {
+  "1P", "1P", "BOT", "BOT", "BOT", "1P", "BOT", "1P", "1P"
 };
 
-int menuHighScores[7] = {0,0,0,0,0,0,0};
+int menuHighScores[9] = {0,0,0,0,0,0,0,0,0};
 
 // ============= FORWARD DECLARATIONS =============
 void showMenu();
@@ -95,6 +110,8 @@ void resetGameC4();
 void resetTTTGame();
 void showStartScreenNinja();
 void showStartScreenPong();
+void showStartScreenSperm();
+void showStartScreenCar();
 
 // ================================================================
 // =================== SNAKE VARIABLES ============================
@@ -241,15 +258,8 @@ int currentSel = 1;
 const int TRAIL_SIZE = 5;
 int trailX[TRAIL_SIZE], trailY[TRAIL_SIZE];
 
-struct Spike {
-  float y;
-  int side;
-  bool isBlue;
-};
-
-struct NinjaDot {
-  float x, y, speed;
-};
+struct Spike { float y; int side; bool isBlue; };
+struct NinjaDot { float x, y, speed; };
 
 const int MAX_NINJA_DOTS = 20;
 NinjaDot ninjaDots[MAX_NINJA_DOTS];
@@ -300,21 +310,119 @@ bool pongActive = false;
 bool pongPaused = false;
 
 // ================================================================
+// =================== SPERM RACE VARIABLES =======================
+// ================================================================
+#define SR_BG_COLOR    0xFDCF
+#define SR_SPERM_WHITE 0xFFFF
+#define SR_ENEMY_RED   0xF800
+#define SR_HEAL_BLUE   0x001F
+#define SR_BAR_COLOR   0x0000
+#define SR_HEART_RED   0xF800
+#define SR_WASTE_RED   0xB820
+
+float srPlayerX = 50, srPlayerY = 150;
+float srPrevX = 50, srPrevY = 150;
+float srMoveSpeed = 5.5;
+float srGameSpeed = 2.5;
+unsigned long srScore = 0;
+unsigned long srHighScore = 0;
+int srLives = 3;
+bool srDead = false;
+bool srPaused = false;
+unsigned long srLastScoreUpdate = 0;
+unsigned long srLastButtonPress = 0;
+
+struct SREnemyS { float x, y, prevX, prevY; };
+SREnemyS srEnemies[6];
+
+struct SRParticle { float x, y, prevX, prevY; float speed; int size; };
+SRParticle srWaste[15];
+
+float srBlueX, srBlueY, srPrevBlueX, srPrevBlueY;
+bool srBlueActive = false;
+unsigned long srNextBlueSpawn = 5000;
+float srTailPhase = 0;
+
+bool srIsBlinking = false;
+bool srIsHealing = false;
+unsigned long srBlinkTimer = 0;
+int srBlinkCount = 0;
+
+float srGetSafeY(int index) {
+  float newY;
+  bool safe;
+  int attempts = 0;
+  do {
+    safe = true;
+    newY = random(35, 220);
+    attempts++;
+    for (int i = 0; i < 6; i++) {
+      if (i != index && abs(newY - srEnemies[i].y) < 28) { safe = false; break; }
+    }
+  } while (!safe && attempts < 15);
+  return newY;
+}
+
+// ================================================================
+// =================== CAR RACING VARIABLES =======================
+// ================================================================
+#define CR_ROAD_GRAY   TFT_DARKGREY
+#define CR_GRASS_BLACK TFT_BLACK
+#define CR_LINE_YELLOW TFT_YELLOW
+#define CR_CURB_RED    TFT_RED
+#define CR_WINDOW_BLUE TFT_CYAN
+#define CR_RACER_RED   TFT_RED
+#define CR_TEXT_COLOR  TFT_WHITE
+
+const int crLaneX[] = {80, 160, 240};
+int crPlayerLane = 1;
+float crCurrentPlayerX = 160;
+int crTargetX = 160;
+float crSlideSpeed = 6.0;
+int crScore = 0;
+bool crGameOver = false;
+bool crIsPaused = false;
+int crLineOffset = 0;
+int crHighScore = 0;
+float crEnemyY = -80;
+int crEnemyLane = 1;
+int crEnemyType = 0;
+float crGameSpeed = 4.5;
+
+int crVehiclePoints[]  = {3, 4, 8, 10, 12};
+int crVehicleHeights[] = {32, 32, 32, 40, 58};
+
+unsigned long crLastButtonPress = 0;
+const int crDebounceDelay = 200;
+unsigned long crLeftPressStart = 0;
+unsigned long crRightPressStart = 0;
+bool crLeftProcessing = false;
+bool crRightProcessing = false;
+const int crLongPressTime = 170;
+bool crLastLeftState = HIGH, crLastRightState = HIGH;
+bool crLastSelectState = HIGH, crLastStartState = HIGH;
+
+// ================================================================
 // =================== VERTICAL MENU SYSTEM =======================
 // ================================================================
+
+// Converts a menu index to its visual row on screen (0..MENU_VISIBLE-1), or -1 if off-screen
+int menuVisualRow(int idx) {
+  int row = idx - menuScrollOffset;
+  if (row < 0 || row >= MENU_VISIBLE) return -1;
+  return row;
+}
+
 void drawMenuChrome() {
   tft.fillScreen(MENU_BG);
 
-  // Top accent line
   tft.drawFastHLine(0, 0, screenWidth, 0x0841);
   tft.fillRect(0, 1, screenWidth, MENU_HEADER_H - 1, 0x0008);
 
-  // Left bracket
   tft.drawFastVLine(8, 6, 30, 0x2124);
   tft.drawFastHLine(8, 6, 5, 0x2124);
   tft.drawFastHLine(8, 35, 5, 0x2124);
 
-  // Title
   tft.setTextSize(3);
   tft.setTextColor(0x07FF);
   tft.setCursor(24, 10);
@@ -323,30 +431,26 @@ void drawMenuChrome() {
   tft.setTextSize(1);
   tft.setTextColor(0x2945);
   tft.setCursor(24, 32);
-  tft.print("GAME CONSOLE  v3.0  7 GAMES");
+  tft.print("GAME CONSOLE  v4.0  9 GAMES");
 
-  // Right bracket
   tft.drawFastVLine(screenWidth - 8, 6, 30, 0x2124);
   tft.drawFastHLine(screenWidth - 13, 6, 5, 0x2124);
   tft.drawFastHLine(screenWidth - 13, 35, 5, 0x2124);
 
-  // Dot cluster
   for (int i = 0; i < 4; i++) {
     tft.fillCircle(screenWidth - 20 - i * 8, 20, 2,
       (i==0)?0xF800:(i==1)?0xFFE0:(i==2)?0x07E0:0x07FF);
   }
 
-  // Header separator
   tft.drawFastHLine(0, MENU_HEADER_H, screenWidth, 0x1082);
 
-  // Footer
   int fy = MENU_FOOTER_Y;
   if (fy < screenHeight - 14) {
     tft.drawFastHLine(0, fy, screenWidth, 0x1082);
     tft.fillRect(0, fy+1, screenWidth, screenHeight - fy - 1, 0x0008);
     tft.setTextSize(1);
-    tft.setTextColor(0x3186); tft.setCursor(12, fy+8); tft.print("[UP/DN]");
-    tft.setTextColor(0x2945); tft.setCursor(58, fy+8); tft.print("Nav");
+    tft.setTextColor(0x3186); tft.setCursor(12, fy+8);  tft.print("[UP/DN]");
+    tft.setTextColor(0x2945); tft.setCursor(58, fy+8);  tft.print("Nav");
     tft.setTextColor(0x07E0); tft.setCursor(100, fy+8); tft.print("[A]");
     tft.setTextColor(0x2945); tft.setCursor(117, fy+8); tft.print("Launch");
     tft.setTextColor(0xF800); tft.setCursor(176, fy+8); tft.print("[B]");
@@ -356,8 +460,33 @@ void drawMenuChrome() {
   tft.drawFastHLine(0, screenHeight-1, screenWidth, 0x0841);
 }
 
+// Draw scroll indicators when list extends beyond visible area
+void drawScrollIndicators() {
+  // Top arrow if scrolled down
+  if (menuScrollOffset > 0) {
+    int ay = MENU_LIST_Y - 1;
+    tft.fillTriangle(screenWidth/2 - 5, ay,
+                     screenWidth/2 + 5, ay,
+                     screenWidth/2,     ay - 5, 0x4228);
+  } else {
+    tft.fillRect(screenWidth/2 - 6, MENU_LIST_Y - 6, 13, 6, MENU_BG);
+  }
+  // Bottom arrow if more items below
+  if (menuScrollOffset + MENU_VISIBLE < MENU_ITEMS) {
+    int ay = MENU_FOOTER_Y;
+    tft.fillTriangle(screenWidth/2 - 5, ay,
+                     screenWidth/2 + 5, ay,
+                     screenWidth/2,     ay + 5, 0x4228);
+  } else {
+    tft.fillRect(screenWidth/2 - 6, MENU_FOOTER_Y, 13, 6, MENU_BG);
+  }
+}
+
 void drawMenuItem(int idx, bool active) {
-  int y = MENU_LIST_Y + idx * MENU_ITEM_H;
+  int row = menuVisualRow(idx);
+  if (row < 0) return;  // off screen, don't draw
+
+  int y = MENU_LIST_Y + row * MENU_ITEM_H;
   uint16_t accent = GAME_ACCENT[idx];
   uint16_t dim    = GAME_DIM[idx];
 
@@ -397,15 +526,27 @@ void drawMenuItem(int idx, bool active) {
       tft.fillRoundRect(iconX+2, iconY+4, 10, 8, 2, iconColor);
       for(int f=0;f<4;f++) tft.fillRoundRect(iconX+2+f*3, iconY, 2, 5, 1, iconColor);
       break;
-    case 5: // Ninja – two vertical lines
+    case 5: // Ninja
       tft.fillRect(iconX+2,  iconY+1, 3, 12, iconColor);
       tft.fillRect(iconX+9,  iconY+1, 3, 12, iconColor);
       tft.fillTriangle(iconX+5, iconY+7, iconX, iconY+7, iconX+3, iconY+4, iconColor);
       break;
-    case 6: // Pong – paddle + ball
+    case 6: // Pong
       tft.fillRect(iconX, iconY+2, 3, 10, iconColor);
       tft.fillRect(iconX+11, iconY+2, 3, 10, iconColor);
       tft.fillCircle(iconX+7, iconY+7, 2, iconColor);
+      break;
+    case 7: // Sperm Race – circle with tail
+      tft.fillCircle(iconX+10, iconY+7, 4, iconColor);
+      tft.drawFastHLine(iconX, iconY+7, 7, iconColor);
+      tft.drawPixel(iconX+1, iconY+6, iconColor);
+      tft.drawPixel(iconX+3, iconY+8, iconColor);
+      break;
+    case 8: // Car Racing – little car top-down
+      tft.fillRoundRect(iconX+3, iconY+1, 8, 12, 2, iconColor);
+      tft.fillRect(iconX+1, iconY+3, 2, 4, iconColor);
+      tft.fillRect(iconX+11, iconY+3, 2, 4, iconColor);
+      tft.fillRect(iconX+4, iconY+4, 6, 4, MENU_BG);
       break;
   }
 
@@ -441,13 +582,34 @@ void drawMenuItem(int idx, bool active) {
 }
 
 void updateMenuSelection(int oldSel, int newSel) {
-  drawMenuItem(oldSel, false);
-  drawMenuItem(newSel, true);
+  // Check if we need to scroll
+  bool needFullRedraw = false;
+  if (newSel < menuScrollOffset) {
+    menuScrollOffset = newSel;
+    needFullRedraw = true;
+  } else if (newSel >= menuScrollOffset + MENU_VISIBLE) {
+    menuScrollOffset = newSel - MENU_VISIBLE + 1;
+    needFullRedraw = true;
+  }
+
+  if (needFullRedraw) {
+    // Redraw all visible items
+    for (int i = menuScrollOffset; i < menuScrollOffset + MENU_VISIBLE && i < MENU_ITEMS; i++) {
+      drawMenuItem(i, i == newSel);
+    }
+  } else {
+    drawMenuItem(oldSel, false);
+    drawMenuItem(newSel, true);
+  }
+  drawScrollIndicators();
 }
 
 void showMenu() {
   drawMenuChrome();
-  for (int i = 0; i < MENU_ITEMS; i++) drawMenuItem(i, i == selectedGame);
+  for (int i = menuScrollOffset; i < menuScrollOffset + MENU_VISIBLE && i < MENU_ITEMS; i++) {
+    drawMenuItem(i, i == selectedGame);
+  }
+  drawScrollIndicators();
 }
 
 void returnToMenu() {
@@ -1119,7 +1281,6 @@ void initNinjaDots(){
     ninjaDots[i].speed=(random(5,15)/10.0);
   }
 }
-
 void showStartScreenNinja(){
   tft.fillScreen(BG_COLOR);
   tft.setTextColor(NINJA_COLOR);tft.setTextSize(3);
@@ -1138,7 +1299,6 @@ void showStartScreenNinja(){
   tft.setTextColor(TFT_CYAN);
   tft.setCursor(30,228);tft.print("Best: ");tft.print(ninjaHighScore);
 }
-
 void startNinjaGame(){
   tft.fillScreen(BG_COLOR);
   ninjaPlayerY=100; ninjaPlayerSide=0;
@@ -1150,7 +1310,6 @@ void startNinjaGame(){
   spikes[1]={-200.0f,(int)random(0,2),false};
   ninjaPlaying=true;
 }
-
 void updateNinjaScoreDisplay(){
   tft.fillRect(220,0,100,60,BG_COLOR);
   tft.setTextColor(TFT_GREEN,BG_COLOR);tft.setTextSize(1);tft.setCursor(250,10);tft.print("SCORE");
@@ -1160,9 +1319,7 @@ void updateNinjaScoreDisplay(){
   tft.setTextColor(TFT_WHITE,BG_COLOR);tft.setTextSize(2);tft.setCursor(244,62);
   sprintf(sb,"%04lu",ninjaHighScore);tft.print(sb);
 }
-
 void ninjaGameOver(){
-  // Screen shake
   for(int i=0;i<5;i++){tft.invertDisplay(true);delay(40);tft.invertDisplay(false);delay(40);}
   ninjaPlaying=false; ninjaPaused=false;
   unsigned long cs=ninjaScore/10;
@@ -1176,9 +1333,7 @@ void ninjaGameOver(){
   tft.setTextSize(1);tft.setCursor(65,180);tft.setTextColor(TFT_YELLOW);
   tft.print("SELECT: Play Again   B: Menu");
 }
-
 void updateNinjaGame(){
-  // Button read
   bool leftState=(digitalRead(BTN_LEFT)==LOW);
   bool rightState=(digitalRead(BTN_RIGHT)==LOW);
   if(leftState&&!ninjaLeftPressed&&(millis()-lastNinjaLeft>NINJA_DEBOUNCE)){
@@ -1193,10 +1348,7 @@ void updateNinjaGame(){
   bool showPlayer=true;
   uint16_t playerColor=NINJA_COLOR;
 
-  if(!isRushMode){
-    ninjaGameSpeed+=0.0024;
-    if(ninjaGameSpeed>6.0) ninjaGameSpeed=6.0;
-  }
+  if(!isRushMode){ninjaGameSpeed+=0.0024;if(ninjaGameSpeed>6.0) ninjaGameSpeed=6.0;}
   if(isRushMode){
     unsigned long el=millis()-rushStartTime;
     if(el<rushDuration){
@@ -1206,32 +1358,24 @@ void updateNinjaGame(){
   }
   ninjaScore+=scoreMul;
 
-  // Clear play area (only between walls)
   tft.fillRect(NINJA_WALL_LEFT+NINJA_WALL_THICK,0,(NINJA_WALL_RIGHT-NINJA_WALL_LEFT)-NINJA_WALL_THICK,240,BG_COLOR);
 
-  // Dots
   for(int i=0;i<MAX_NINJA_DOTS;i++){
     ninjaDots[i].y+=ninjaDots[i].speed+(effectiveSpeed*0.3);
-    if(ninjaDots[i].y>240){
-      ninjaDots[i].y=0;
-      ninjaDots[i].x=random(NINJA_WALL_LEFT+NINJA_WALL_THICK+5,NINJA_WALL_RIGHT-5);
-    }
+    if(ninjaDots[i].y>240){ninjaDots[i].y=0;ninjaDots[i].x=random(NINJA_WALL_LEFT+NINJA_WALL_THICK+5,NINJA_WALL_RIGHT-5);}
     tft.drawPixel((int)ninjaDots[i].x,(int)ninjaDots[i].y,NDOT_COLOR);
   }
 
-  // Trail
   for(int i=TRAIL_SIZE-1;i>0;i--){trailX[i]=trailX[i-1];trailY[i]=trailY[i-1];}
   int ninjaX=(ninjaPlayerSide==0)?(NINJA_WALL_LEFT+NINJA_WALL_THICK+2):(NINJA_WALL_RIGHT-NINJA_PW-2);
   trailX[0]=ninjaX;trailY[0]=(int)ninjaPlayerY;
   for(int i=1;i<TRAIL_SIZE;i++) if(trailX[i]>0) tft.drawRect(trailX[i],trailY[i],NINJA_PW,NINJA_PH,TRAIL_COLOR);
 
-  // Walls
   tft.fillRect(NINJA_WALL_LEFT,0,NINJA_WALL_THICK,240,WALL_COLOR);
   tft.fillRect(NINJA_WALL_RIGHT,0,NINJA_WALL_THICK,240,WALL_COLOR);
   tft.drawRect(NINJA_WALL_LEFT-1,0,NINJA_WALL_THICK+2,240,TFT_DARKGREY);
   tft.drawRect(NINJA_WALL_RIGHT-1,0,NINJA_WALL_THICK+2,240,TFT_DARKGREY);
 
-  // Spikes
   for(int i=0;i<2;i++){
     spikes[i].y+=effectiveSpeed;
     int ss=28;
@@ -1245,14 +1389,10 @@ void updateNinjaGame(){
                        NINJA_WALL_RIGHT,(int)spikes[i].y+ss,
                        NINJA_WALL_RIGHT-ss,(int)spikes[i].y+ss/2,sc);
     }
-    // Collision
     if(spikes[i].side==ninjaPlayerSide){
       if(spikes[i].y+ss>ninjaPlayerY&&spikes[i].y<ninjaPlayerY+NINJA_PH){
-        if(spikes[i].isBlue){
-          isRushMode=true;rushStartTime=millis();spikes[i].y=300;
-        } else if(!isRushMode){
-          delay(1000);ninjaGameOver();return;
-        }
+        if(spikes[i].isBlue){isRushMode=true;rushStartTime=millis();spikes[i].y=300;}
+        else if(!isRushMode){delay(1000);ninjaGameOver();return;}
       }
     }
     if(spikes[i].y>240){
@@ -1263,7 +1403,6 @@ void updateNinjaGame(){
     }
   }
 
-  // Draw player
   if(showPlayer){
     tft.fillRect(ninjaX,(int)ninjaPlayerY,NINJA_PW,NINJA_PH,playerColor);
     tft.fillCircle(ninjaX+NINJA_PW-4,(int)ninjaPlayerY+6,2,TFT_BLACK);
@@ -1272,7 +1411,6 @@ void updateNinjaGame(){
 
   updateNinjaScoreDisplay();
 
-  // Rush mode bar
   if(isRushMode&&(millis()-rushStartTime)<rushDuration){
     tft.setTextSize(1);tft.setCursor(225,200);tft.setTextColor(TFT_YELLOW,BG_COLOR);tft.print("RUSH!");
     int bw=80,bx=220,by=210;
@@ -1286,38 +1424,24 @@ void updateNinjaGame(){
   }
   delay(10);
 }
-
 void runNinjaGame(){
   static unsigned long lastBPress=0;
-  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){
-    lastBPress=millis();ninjaPlaying=false;returnToMenu();return;
-  }
+  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){lastBPress=millis();ninjaPlaying=false;returnToMenu();return;}
   if(!ninjaPlaying){
-    // On start screen
     if(digitalRead(BTN_SELECT)==LOW){delay(200);startNinjaGame();}
     return;
   }
-  // Pause
   if(digitalRead(BTN_START)==LOW){
     delay(200);ninjaPaused=!ninjaPaused;
     if(ninjaPaused){
-      tft.fillRoundRect(50,90,160,50,10,TFT_BLUE);
-      tft.drawRoundRect(50,90,160,50,10,TFT_WHITE);
-      tft.setTextColor(TFT_WHITE);tft.setTextSize(2);
-      tft.setCursor(90,105);tft.print("PAUSED");
+      tft.fillRoundRect(50,90,160,50,10,TFT_BLUE);tft.drawRoundRect(50,90,160,50,10,TFT_WHITE);
+      tft.setTextColor(TFT_WHITE);tft.setTextSize(2);tft.setCursor(90,105);tft.print("PAUSED");
       tft.setTextSize(1);tft.setCursor(65,125);tft.print("START to Resume");
-    } else {
-      tft.fillRect(50,90,160,50,BG_COLOR);
-    }
+    } else {tft.fillRect(50,90,160,50,BG_COLOR);}
     delay(200);
   }
   if(ninjaPaused) return;
-
-  // After game over: SELECT restarts, B already handled
-  if(!ninjaPlaying){
-    if(digitalRead(BTN_SELECT)==LOW){delay(200);startNinjaGame();}
-    return;
-  }
+  if(!ninjaPlaying){if(digitalRead(BTN_SELECT)==LOW){delay(200);startNinjaGame();}return;}
   updateNinjaGame();
 }
 
@@ -1334,17 +1458,14 @@ void drawPongSnow(){
     tft.drawPixel((int)snowflakes[i].x,(int)snowflakes[i].y,COLOR_SNOW_P);
   }
 }
-
 void drawPongElements(){
   tft.drawRect(PONG_LEFT-2,PONG_TOP-2,PONG_RIGHT-PONG_LEFT+4,PONG_BOTTOM-PONG_TOP+4,TFT_WHITE);
-  for(int y=PONG_TOP;y<PONG_BOTTOM;y+=15)
-    tft.fillRect(screenWidth/2-2,y,4,8,COLOR_GRID_P);
+  for(int y=PONG_TOP;y<PONG_BOTTOM;y+=15) tft.fillRect(screenWidth/2-2,y,4,8,COLOR_GRID_P);
   tft.fillRect(PONG_LEFT,(int)botPaddleY,PADDLE_W,PADDLE_H,COLOR_BOT_P);
   tft.fillRect(PONG_RIGHT-PADDLE_W,(int)youPaddleY,PADDLE_W,PADDLE_H,COLOR_YOU_P);
   tft.fillCircle((int)ballX,(int)ballY,BALL_SZ,COLOR_BALL_P);
   tft.fillRect(screenWidth/2-1,PONG_TOP,2,PONG_BOTTOM-PONG_TOP,0x39E7);
 }
-
 void updatePongScoreUI(){
   tft.fillRect(0,0,screenWidth,22,TFT_BLACK);
   tft.setTextSize(2);tft.setTextColor(TFT_ORANGE);
@@ -1352,7 +1473,6 @@ void updatePongScoreUI(){
   tft.setTextColor(TFT_WHITE);
   tft.setCursor(screenWidth-120,2);tft.print("SC:");tft.print(pongScore);
 }
-
 void resetPongBall(){
   ballX=screenWidth/2;ballY=(PONG_TOP+PONG_BOTTOM)/2;
   ballDX=(random(0,2)==0)?pongBallSpeed:-pongBallSpeed;
@@ -1362,7 +1482,6 @@ void resetPongBall(){
   botPaddleY=PONG_TOP+(PONG_BOTTOM-PONG_TOP-PADDLE_H)/2;
   youPaddleY=botPaddleY;
 }
-
 void pongGameOver(){
   pongActive=false;
   if(pongScore>pongHighScore){pongHighScore=pongScore;menuHighScores[6]=(int)pongHighScore;}
@@ -1378,7 +1497,6 @@ void pongGameOver(){
   tft.setTextColor(TFT_YELLOW);tft.setTextSize(1);
   tft.setCursor(px+40,py+115);tft.print("SELECT: Play Again   B: Menu");
 }
-
 void showStartScreenPong(){
   tft.fillScreen(TFT_BLACK);
   tft.setTextSize(5);tft.setTextColor(COLOR_YOU_P);
@@ -1390,101 +1508,402 @@ void showStartScreenPong(){
   tft.setCursor(screenWidth/2-80,screenHeight-35);tft.print("UP/DN: Move  |  B: Back");
   tft.setCursor(screenWidth/2-65,screenHeight-22);tft.print("Best: ");tft.print(pongHighScore);
   for(int i=0;i<40;i++){
-    snowflakes[i].x=random(0,screenWidth);
-    snowflakes[i].y=random(0,screenHeight);
-    snowflakes[i].speed=random(1,6)/10.0;
+    snowflakes[i].x=random(0,screenWidth);snowflakes[i].y=random(0,screenHeight);snowflakes[i].speed=random(1,6)/10.0;
   }
-  // Animate snow briefly
   for(int f=0;f<80;f++){drawPongSnow();delay(12);}
 }
-
 void runPongGame(){
   static unsigned long lastBPress=0;
-  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){
-    lastBPress=millis();pongActive=false;returnToMenu();return;
-  }
+  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){lastBPress=millis();pongActive=false;returnToMenu();return;}
   if(!pongActive){
     drawPongSnow();
     if(digitalRead(BTN_SELECT)==LOW){
-      delay(60);
-      pongActive=true;pongPaused=false;
-      resetPongBall();
-      tft.fillScreen(TFT_BLACK);
-      updatePongScoreUI();drawPongElements();
+      delay(60);pongActive=true;pongPaused=false;resetPongBall();
+      tft.fillScreen(TFT_BLACK);updatePongScoreUI();drawPongElements();
     }
     return;
   }
   if(digitalRead(BTN_SELECT)==LOW){
-    delay(60);
-    pongPaused=!pongPaused;
-    if(pongPaused){
-      tft.setTextSize(3);tft.setTextColor(TFT_YELLOW);
-      tft.setCursor(screenWidth/2-50,screenHeight/2-15);tft.print("PAUSED");
-    } else {
-      tft.fillRect(screenWidth/2-60,screenHeight/2-25,120,50,TFT_BLACK);
-    }
+    delay(60);pongPaused=!pongPaused;
+    if(pongPaused){tft.setTextSize(3);tft.setTextColor(TFT_YELLOW);tft.setCursor(screenWidth/2-50,screenHeight/2-15);tft.print("PAUSED");}
+    else{tft.fillRect(screenWidth/2-60,screenHeight/2-25,120,50,TFT_BLACK);}
     while(digitalRead(BTN_SELECT)==LOW) delay(10);
   }
   if(pongPaused){delay(10);return;}
-
-  // Score timer
-  if(millis()-lastPongScoreUpdate>250){
-    pongScore++;lastPongScoreUpdate=millis();updatePongScoreUI();
-  }
-
+  if(millis()-lastPongScoreUpdate>250){pongScore++;lastPongScoreUpdate=millis();updatePongScoreUI();}
   int oldBX=(int)ballX,oldBY=(int)ballY,oldBotY=(int)botPaddleY,oldYouY=(int)youPaddleY;
-
-  // Player input
   if(digitalRead(BTN_UP)==LOW&&youPaddleY>PONG_TOP) youPaddleY-=4.5;
   if(digitalRead(BTN_DOWN)==LOW&&youPaddleY<PONG_BOTTOM-PADDLE_H) youPaddleY+=4.5;
-
-  // Perfect bot AI
   float targetBot=ballY-(PADDLE_H/2);
   if(targetBot<PONG_TOP) targetBot=PONG_TOP;
   if(targetBot>PONG_BOTTOM-PADDLE_H) targetBot=PONG_BOTTOM-PADDLE_H;
   botPaddleY=targetBot;
-
-  // Boundaries
   if(youPaddleY<PONG_TOP) youPaddleY=PONG_TOP;
   if(youPaddleY>PONG_BOTTOM-PADDLE_H) youPaddleY=PONG_BOTTOM-PADDLE_H;
-
-  // Ball update
   ballX+=ballDX; ballY+=ballDY;
-
-  // Top/bottom bounce
   if(ballY-BALL_SZ<=PONG_TOP){ballY=PONG_TOP+BALL_SZ;ballDY=abs(ballDY);}
   if(ballY+BALL_SZ>=PONG_BOTTOM){ballY=PONG_BOTTOM-BALL_SZ;ballDY=-abs(ballDY);}
-
-  // Bot paddle (left) collision
-  if(ballX-BALL_SZ<=PONG_LEFT+PADDLE_W&&ballX+BALL_SZ>=PONG_LEFT&&
-     ballY+BALL_SZ>=botPaddleY&&ballY-BALL_SZ<=botPaddleY+PADDLE_H){
-    float hp=(ballY-botPaddleY)/PADDLE_H;
-    ballDY=(hp-0.5)*4.5;ballDX=abs(ballDX)+0.05;
-    if(abs(ballDY)>3.8)ballDY=(ballDY>0)?3.8:-3.8;
-    if(ballDX>3.0)ballDX=3.0;
-    ballX=PONG_LEFT+PADDLE_W+BALL_SZ;
+  if(ballX-BALL_SZ<=PONG_LEFT+PADDLE_W&&ballX+BALL_SZ>=PONG_LEFT&&ballY+BALL_SZ>=botPaddleY&&ballY-BALL_SZ<=botPaddleY+PADDLE_H){
+    float hp=(ballY-botPaddleY)/PADDLE_H;ballDY=(hp-0.5)*4.5;ballDX=abs(ballDX)+0.05;
+    if(abs(ballDY)>3.8)ballDY=(ballDY>0)?3.8:-3.8;if(ballDX>3.0)ballDX=3.0;ballX=PONG_LEFT+PADDLE_W+BALL_SZ;
   }
-  // Player paddle (right) collision
-  if(ballX+BALL_SZ>=PONG_RIGHT-PADDLE_W&&ballX-BALL_SZ<=PONG_RIGHT&&
-     ballY+BALL_SZ>=youPaddleY&&ballY-BALL_SZ<=youPaddleY+PADDLE_H){
-    float hp=(ballY-youPaddleY)/PADDLE_H;
-    ballDY=(hp-0.5)*4.5;ballDX=-abs(ballDX)-0.05;
-    if(abs(ballDY)>3.8)ballDY=(ballDY>0)?3.8:-3.8;
-    if(abs(ballDX)>3.0)ballDX=(ballDX>0)?3.0:-3.0;
-    ballX=PONG_RIGHT-PADDLE_W-BALL_SZ;
+  if(ballX+BALL_SZ>=PONG_RIGHT-PADDLE_W&&ballX-BALL_SZ<=PONG_RIGHT&&ballY+BALL_SZ>=youPaddleY&&ballY-BALL_SZ<=youPaddleY+PADDLE_H){
+    float hp=(ballY-youPaddleY)/PADDLE_H;ballDY=(hp-0.5)*4.5;ballDX=-abs(ballDX)-0.05;
+    if(abs(ballDY)>3.8)ballDY=(ballDY>0)?3.8:-3.8;if(abs(ballDX)>3.0)ballDX=(ballDX>0)?3.0:-3.0;ballX=PONG_RIGHT-PADDLE_W-BALL_SZ;
   }
-
-  // Ball out
   if(ballX+BALL_SZ<=PONG_LEFT||ballX-BALL_SZ>=PONG_RIGHT){pongGameOver();return;}
-
-  // Erase old
   tft.fillRect(PONG_LEFT,oldBotY,PADDLE_W,PADDLE_H,TFT_BLACK);
   tft.fillRect(PONG_RIGHT-PADDLE_W,oldYouY,PADDLE_W,PADDLE_H,TFT_BLACK);
   tft.fillCircle(oldBX,oldBY,BALL_SZ,TFT_BLACK);
+  drawPongSnow();drawPongElements();delay(12);
+}
 
-  drawPongSnow();
-  drawPongElements();
-  delay(12);
+// ================================================================
+// =================== SPERM RACE GAME ============================
+// ================================================================
+void srDrawPixelHeart(int x, int y, uint16_t color) {
+  tft.fillRect(x+1,y,3,1,color);tft.fillRect(x+5,y,3,1,color);
+  tft.fillRect(x,y+1,9,3,color);tft.fillRect(x+1,y+4,7,1,color);
+  tft.fillRect(x+2,y+5,5,1,color);tft.fillRect(x+3,y+6,3,1,color);
+  tft.drawPixel(x+4,y+7,color);
+}
+void srUpdateHUD() {
+  tft.fillRect(0,0,320,25,SR_BAR_COLOR);
+  tft.setTextSize(2);tft.setTextColor(TFT_WHITE);
+  tft.setCursor(5,5);tft.print("HI:");tft.print(srHighScore);
+  for(int i=0;i<srLives;i++) srDrawPixelHeart(90+(i*15),8,SR_HEART_RED);
+  tft.setTextColor(TFT_YELLOW);tft.setCursor(250,5);tft.print("S:");tft.print(srScore);
+}
+void srDrawWasteParticle(int x,int y,int size,uint16_t color){
+  if(size==1)tft.drawPixel(x,y,color);
+  else if(size==2)tft.fillRect(x-1,y-1,2,2,color);
+  else tft.fillCircle(x,y,size-1,color);
+}
+void srDrawSperm(int x,int y,uint16_t color){
+  tft.fillCircle(x,y,8,color);
+  if(color!=SR_BG_COLOR){
+    tft.fillCircle(x+2,y-4,2,TFT_BLACK);tft.fillCircle(x+2,y+4,2,TFT_BLACK);
+    tft.fillCircle(x+3,y-5,1,TFT_WHITE);tft.fillCircle(x+3,y+3,1,TFT_WHITE);
+  }
+  for(int i=0;i<18;i++){
+    int sY=y+(int)(sin(srTailPhase+(i*0.5))*(i*1.2));
+    int sX=x-7-(i*1)+((i<12)?0:0);  // simplified
+    if(i<12)tft.fillCircle(sX,sY,2,color);
+    else tft.drawPixel(sX,sY,color);
+  }
+}
+void srResetGame(){
+  if(srScore>srHighScore) srHighScore=srScore;
+  tft.fillScreen(SR_BG_COLOR);
+  srScore=0;srLives=3;srGameSpeed=2.5;
+  srPlayerX=50;srPlayerY=150;
+  srDead=false;srPaused=false;srIsBlinking=false;srBlueActive=false;
+  for(int i=0;i<6;i++){
+    srEnemies[i].x=320+(i*55);srEnemies[i].y=srGetSafeY(i);
+    srEnemies[i].prevX=srEnemies[i].x;srEnemies[i].prevY=srEnemies[i].y;
+  }
+  for(int i=0;i<15;i++){
+    srWaste[i].x=random(0,320);srWaste[i].y=random(25,230);
+    srWaste[i].speed=random(8,25)/10.0;srWaste[i].size=random(1,3);
+  }
+  srUpdateHUD();
+}
+void srGameOver(){
+  delay(500);srDead=true;
+  if(srScore>srHighScore){srHighScore=srScore;menuHighScores[7]=(int)srHighScore;}
+  tft.fillRoundRect(40,70,240,100,10,TFT_BLACK);
+  tft.drawRoundRect(40,70,240,100,10,TFT_WHITE);
+  tft.setTextColor(TFT_RED);tft.setTextSize(3);tft.setCursor(70,85);tft.print("GAME OVER");
+  tft.setTextSize(2);tft.setTextColor(TFT_YELLOW);tft.setCursor(70,115);tft.print("HI: ");tft.print(srHighScore);
+  tft.setTextColor(TFT_WHITE);tft.setCursor(70,140);tft.print("SC: ");tft.print(srScore);
+  tft.setTextColor(0x07FF);tft.setTextSize(1);tft.setCursor(85,160);tft.print("[ SELECT: RETRY  B: MENU ]");
+}
+void showStartScreenSperm(){
+  tft.fillScreen(SR_BG_COLOR);
+  tft.setTextColor(TFT_RED);tft.setTextSize(2);
+  tft.setCursor(60,30);tft.print("SPERM RACE");
+  tft.setTextColor(TFT_BLACK);tft.setTextSize(1);
+  tft.setCursor(30,70);tft.print("Dodge RED enemies!");
+  tft.setCursor(30,85);tft.print("Catch BLUE balls for extra life!");
+  tft.setCursor(30,100);tft.print("UP/DOWN/LEFT/RIGHT: Move");
+  tft.setCursor(30,115);tft.print("SELECT: Pause  B: Menu");
+  tft.setTextColor(TFT_RED);tft.setCursor(60,145);tft.print("Press SELECT to start");
+  while(digitalRead(BTN_SELECT)==HIGH&&digitalRead(BTN_B)==HIGH) delay(10);
+  if(digitalRead(BTN_B)==LOW){delay(200);returnToMenu();return;}
+  delay(300);srResetGame();
+}
+void runSpermRaceGame(){
+  static unsigned long lastBPress=0;
+  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){lastBPress=millis();returnToMenu();return;}
+
+  if(digitalRead(BTN_SELECT)==LOW&&millis()-srLastButtonPress>300){
+    srLastButtonPress=millis();
+    if(srDead) srResetGame();
+    else{
+      srPaused=!srPaused;
+      if(srPaused){
+        tft.fillRoundRect(85,100,150,40,5,TFT_BLACK);tft.drawRoundRect(85,100,150,40,5,TFT_WHITE);
+        tft.setTextColor(TFT_YELLOW);tft.setTextSize(2);tft.setCursor(115,115);tft.print("PAUSED");
+      } else {tft.fillScreen(SR_BG_COLOR);srUpdateHUD();}
+    }
+  }
+  if(srPaused||srDead) return;
+
+  if(millis()-srLastScoreUpdate>250){
+    srScore++;srLastScoreUpdate=millis();srUpdateHUD();
+    if(srGameSpeed<7.0) srGameSpeed+=0.001;
+  }
+
+  // Waste particles
+  for(int i=0;i<15;i++){
+    srDrawWasteParticle((int)srWaste[i].prevX,(int)srWaste[i].prevY,srWaste[i].size,SR_BG_COLOR);
+    srWaste[i].prevX=srWaste[i].x;srWaste[i].prevY=srWaste[i].y;
+    srWaste[i].x-=srWaste[i].speed;
+    if(srWaste[i].x<0){srWaste[i].x=320;srWaste[i].y=random(25,230);srWaste[i].speed=random(8,25)/10.0;}
+    srDrawWasteParticle((int)srWaste[i].x,(int)srWaste[i].y,srWaste[i].size,SR_WASTE_RED);
+  }
+
+  // Player movement
+  srPrevX=srPlayerX;srPrevY=srPlayerY;
+  if(digitalRead(BTN_UP)==LOW)    srPlayerY-=srMoveSpeed;
+  if(digitalRead(BTN_DOWN)==LOW)  srPlayerY+=srMoveSpeed;
+  if(digitalRead(BTN_LEFT)==LOW)  srPlayerX-=srMoveSpeed;
+  if(digitalRead(BTN_RIGHT)==LOW) srPlayerX+=srMoveSpeed;
+  if(srPlayerX<25)srPlayerX=25;if(srPlayerX>295)srPlayerX=295;
+  if(srPlayerY<35)srPlayerY=35;if(srPlayerY>225)srPlayerY=225;
+
+  srDrawSperm((int)srPrevX,(int)srPrevY,SR_BG_COLOR);
+
+  // Enemies
+  for(int i=0;i<6;i++){
+    tft.fillCircle((int)srEnemies[i].prevX,(int)srEnemies[i].prevY,10,SR_BG_COLOR);
+    srEnemies[i].prevX=srEnemies[i].x;srEnemies[i].prevY=srEnemies[i].y;
+    srEnemies[i].x-=srGameSpeed;
+    if(srEnemies[i].x<-15){srEnemies[i].x=335;srEnemies[i].y=srGetSafeY(i);}
+    tft.fillCircle((int)srEnemies[i].x,(int)srEnemies[i].y,10,SR_ENEMY_RED);
+    tft.fillCircle((int)srEnemies[i].x-3,(int)srEnemies[i].y-3,2,TFT_BLACK);
+    tft.fillCircle((int)srEnemies[i].x+3,(int)srEnemies[i].y-3,2,TFT_BLACK);
+    tft.fillCircle((int)srEnemies[i].x,(int)srEnemies[i].y+2,2,TFT_BLACK);
+    float dx=srPlayerX-srEnemies[i].x,dy=srPlayerY-srEnemies[i].y;
+    if(dx*dx+dy*dy<196&&!srIsBlinking){
+      srLives--;srUpdateHUD();
+      tft.fillCircle((int)srEnemies[i].x,(int)srEnemies[i].y,12,SR_BG_COLOR);
+      srEnemies[i].x=335;srEnemies[i].y=srGetSafeY(i);
+      if(srLives<=0){srGameOver();return;}
+      else{srIsBlinking=true;srIsHealing=false;srBlinkCount=0;srBlinkTimer=millis();}
+    }
+  }
+
+  // Blue healer
+  if(!srBlueActive&&millis()>srNextBlueSpawn){
+    srBlueActive=true;srBlueX=335;srBlueY=random(35,210);
+    srPrevBlueX=srBlueX;srPrevBlueY=srBlueY;
+  }
+  if(srBlueActive){
+    tft.fillCircle((int)srPrevBlueX,(int)srPrevBlueY,10,SR_BG_COLOR);
+    srPrevBlueX=srBlueX;srPrevBlueY=srBlueY;
+    srBlueX-=(srGameSpeed+0.5);
+    if(srBlueX<-15){srBlueActive=false;srNextBlueSpawn=millis()+random(5000,10000);}
+    else{
+      tft.fillCircle((int)srBlueX,(int)srBlueY,10,SR_HEAL_BLUE);
+      tft.fillCircle((int)srBlueX,(int)srBlueY,5,TFT_CYAN);
+      tft.fillCircle((int)srBlueX,(int)srBlueY,2,TFT_WHITE);
+      float bdx=srPlayerX-srBlueX,bdy=srPlayerY-srBlueY;
+      if(bdx*bdx+bdy*bdy<196&&!srIsBlinking){
+        if(srLives<5)srLives++;srUpdateHUD();srBlueActive=false;
+        tft.fillCircle((int)srBlueX,(int)srBlueY,12,SR_BG_COLOR);
+        srNextBlueSpawn=millis()+random(8000,12000);
+        srIsBlinking=true;srIsHealing=true;srBlinkCount=0;srBlinkTimer=millis();
+      }
+    }
+  }
+
+  srTailPhase+=0.5;
+
+  if(srIsBlinking){
+    if(millis()-srBlinkTimer>80){srBlinkTimer=millis();srBlinkCount++;}
+    if(srBlinkCount<6){
+      uint16_t fc=srIsHealing?((srBlinkCount%2==0)?SR_HEAL_BLUE:SR_SPERM_WHITE):((srBlinkCount%2==0)?SR_ENEMY_RED:SR_SPERM_WHITE);
+      srDrawSperm((int)srPlayerX,(int)srPlayerY,fc);
+    } else{srIsBlinking=false;srDrawSperm((int)srPlayerX,(int)srPlayerY,SR_SPERM_WHITE);}
+  } else srDrawSperm((int)srPlayerX,(int)srPlayerY,SR_SPERM_WHITE);
+
+  delay(16);
+}
+
+// ================================================================
+// =================== CAR RACING GAME ============================
+// ================================================================
+void crDrawRoadBase(){
+  tft.fillRect(30,0,260,240,CR_ROAD_GRAY);
+  for(int i=0;i<240;i+=20){
+    tft.fillRect(30,i,5,10,TFT_WHITE);tft.fillRect(30,i+10,5,10,CR_CURB_RED);
+    tft.fillRect(285,i,5,10,TFT_WHITE);tft.fillRect(285,i+10,5,10,CR_CURB_RED);
+  }
+}
+void crDrawPlayer(float xPos){
+  static float crLastX=160;
+  int x=(int)xPos-15,lx=(int)crLastX-15,y=198;
+  if(lx!=x){
+    tft.fillRect(lx-5,y-5,40,50,CR_ROAD_GRAY);
+    if(lx<=35){for(int i=0;i<240;i+=20){tft.fillRect(30,i,5,10,TFT_WHITE);tft.fillRect(30,i+10,5,10,CR_CURB_RED);}}
+    if(lx+35>=285){for(int i=0;i<240;i+=20){tft.fillRect(285,i,5,10,TFT_WHITE);tft.fillRect(285,i+10,5,10,CR_CURB_RED);}}
+  }
+  tft.fillRoundRect(x+4,y+4,30,40,5,TFT_DARKGREY);
+  tft.fillRoundRect(x,y,30,40,5,CR_RACER_RED);
+  tft.fillRect(x+6,y+8,18,8,CR_WINDOW_BLUE);
+  tft.fillRect(x+3,y+18,24,2,CR_WINDOW_BLUE);
+  tft.fillRect(x+2,y+2,5,4,TFT_YELLOW);tft.fillRect(x+23,y+2,5,4,TFT_YELLOW);
+  tft.fillRect(x+2,y+34,5,4,TFT_RED);tft.fillRect(x+23,y+34,5,4,TFT_RED);
+  tft.fillRect(x-2,y+8,4,12,TFT_BLACK);tft.fillRect(x+28,y+8,4,12,TFT_BLACK);
+  tft.fillRect(x-2,y+24,4,12,TFT_BLACK);tft.fillRect(x+28,y+24,4,12,TFT_BLACK);
+  crLastX=xPos;
+}
+void crDrawEnemy(int lane,int y,int type){
+  int x=crLaneX[lane]-18;
+  switch(type){
+    case 0:
+      tft.fillRoundRect(x+4,y,28,40,5,TFT_BLUE);
+      tft.fillRect(x+8,y+8,20,10,TFT_BLACK);tft.fillRect(x+8,y+28,20,4,TFT_BLACK);
+      tft.fillRect(x+6,y,6,4,TFT_WHITE);tft.fillRect(x+24,y,6,4,TFT_WHITE);
+      tft.fillRect(x+6,y+38,6,4,TFT_RED);tft.fillRect(x+24,y+38,6,4,TFT_RED);break;
+    case 1:
+      tft.fillRoundRect(x+4,y,28,40,5,TFT_GREEN);
+      tft.fillRect(x+16,y,6,40,TFT_BLACK);tft.fillRect(x+7,y+10,22,8,TFT_BLACK);
+      tft.fillRect(x+7,y+28,22,3,TFT_BLACK);
+      tft.fillRect(x+6,y,5,4,TFT_WHITE);tft.fillRect(x+25,y,5,4,TFT_WHITE);break;
+    case 2:
+      tft.fillRect(x+10,y,16,12,TFT_BLACK);tft.fillRect(x+10,y+36,16,12,TFT_BLACK);
+      tft.fillRoundRect(x+11,y+8,14,32,4,TFT_RED);tft.fillRect(x+13,y+12,10,24,TFT_DARKGREY);
+      tft.fillCircle(x+17,y+18,8,TFT_BLACK);tft.fillRect(x+5,y+20,26,8,TFT_OLIVE);
+      tft.fillCircle(x+17,y+36,6,TFT_BLACK);break;
+    case 3:
+      tft.fillRoundRect(x+4,y,28,44,5,TFT_WHITE);
+      tft.fillRect(x+8,y+2,6,3,TFT_RED);tft.fillRect(x+18,y+2,6,3,TFT_BLUE);
+      tft.fillRect(x+7,y+8,22,8,TFT_BLACK);tft.fillRect(x+11,y+24,14,3,TFT_RED);
+      tft.fillRect(x+16,y+19,3,13,TFT_RED);tft.fillRect(x+6,y+18,2,10,TFT_CYAN);
+      tft.fillRect(x+28,y+18,2,10,TFT_CYAN);break;
+    case 4:
+      tft.fillRoundRect(x,y,36,60,3,TFT_LIGHTGREY);tft.fillRect(x,y,36,40,TFT_ORANGE);
+      tft.fillRect(x+5,y+44,26,12,TFT_BLACK);tft.fillRect(x+3,y+58,6,3,TFT_YELLOW);
+      tft.fillRect(x+27,y+58,6,3,TFT_YELLOW);tft.fillRect(x-3,y+44,4,12,TFT_BLACK);
+      tft.fillRect(x+35,y+44,4,12,TFT_BLACK);break;
+  }
+}
+void crTriggerCrash(int xPos){
+  int yPos=210;
+  for(int i=0;i<360;i+=45){float a=i*0.017453;tft.fillTriangle(xPos,yPos,xPos+(int)(cos(a)*35),yPos+(int)(sin(a)*35),xPos+8,yPos+8,TFT_ORANGE);}
+  delay(100);
+  for(int i=22;i<382;i+=45){float a=i*0.017453;tft.fillTriangle(xPos,yPos,xPos+(int)(cos(a)*25),yPos+(int)(sin(a)*25),xPos-5,yPos+5,TFT_YELLOW);}
+  delay(100);tft.fillCircle(xPos,yPos,12,TFT_WHITE);delay(50);
+  for(int i=0;i<30;i++) tft.drawPixel(xPos+random(-30,30),yPos+random(-30,30),TFT_WHITE);
+  delay(50);
+  for(int i=0;i<5;i++){tft.invertDisplay(true);delay(30);tft.invertDisplay(false);delay(30);}
+}
+void crShowGameOver(){
+  if(crScore>crHighScore){crHighScore=crScore;menuHighScores[8]=crHighScore;EEPROM.write(1,crHighScore);EEPROM.commit();}
+  delay(500);tft.fillScreen(TFT_BLACK);
+  tft.drawRect(10,10,300,220,TFT_YELLOW);tft.drawRect(12,12,296,216,TFT_ORANGE);
+  tft.setTextColor(TFT_RED);tft.setTextSize(3);tft.setCursor(65,50);tft.print("GAME OVER!");
+  tft.setTextSize(2);tft.setTextColor(TFT_GREEN);tft.setCursor(90,100);tft.print("SCORE: ");
+  tft.setTextColor(TFT_WHITE);tft.print(crScore);
+  tft.setTextColor(TFT_YELLOW);tft.setCursor(90,130);tft.print("HIGH:  ");
+  tft.setTextColor(TFT_WHITE);tft.print(crHighScore);
+  tft.setTextSize(1);tft.setTextColor(TFT_CYAN);tft.setCursor(70,180);tft.print("PRESS SELECT TO PLAY");
+}
+void crHandleLaneChange(){
+  bool leftPressed=(digitalRead(BTN_LEFT)==LOW);
+  if(leftPressed&&!crLeftProcessing&&millis()-crLastButtonPress>crDebounceDelay){crLeftPressStart=millis();crLeftProcessing=true;}
+  if(crLeftProcessing&&leftPressed&&millis()-crLeftPressStart>=crLongPressTime){crPlayerLane=0;crTargetX=crLaneX[crPlayerLane];crLeftProcessing=false;crLastButtonPress=millis();}
+  if(crLeftProcessing&&!leftPressed){
+    if(millis()-crLeftPressStart<crLongPressTime&&crPlayerLane>0){crPlayerLane--;crTargetX=crLaneX[crPlayerLane];}
+    crLeftProcessing=false;crLeftPressStart=0;
+  }
+  bool rightPressed=(digitalRead(BTN_RIGHT)==LOW);
+  if(rightPressed&&!crRightProcessing&&millis()-crLastButtonPress>crDebounceDelay){crRightPressStart=millis();crRightProcessing=true;}
+  if(crRightProcessing&&rightPressed&&millis()-crRightPressStart>=crLongPressTime){crPlayerLane=2;crTargetX=crLaneX[crPlayerLane];crRightProcessing=false;crLastButtonPress=millis();}
+  if(crRightProcessing&&!rightPressed){
+    if(millis()-crRightPressStart<crLongPressTime&&crPlayerLane<2){crPlayerLane++;crTargetX=crLaneX[crPlayerLane];}
+    crRightProcessing=false;crRightPressStart=0;
+  }
+}
+void crResetGame(){
+  tft.fillScreen(CR_GRASS_BLACK);crDrawRoadBase();
+  crPlayerLane=1;crCurrentPlayerX=crLaneX[crPlayerLane];crTargetX=crLaneX[crPlayerLane];
+  crEnemyY=-80;crEnemyType=random(0,5);crEnemyLane=random(0,3);
+  crScore=0;crGameSpeed=3.8;crGameOver=false;crIsPaused=false;crLineOffset=0;
+  crLeftProcessing=false;crRightProcessing=false;crLeftPressStart=0;crRightPressStart=0;
+}
+void showStartScreenCar(){
+  tft.fillScreen(CR_GRASS_BLACK);
+  tft.setTextColor(CR_LINE_YELLOW);tft.setTextSize(3);tft.setCursor(70,60);tft.print("CAR RACING");
+  tft.setTextSize(1);tft.setTextColor(CR_TEXT_COLOR);
+  tft.setCursor(80,110);tft.print("PRESS SELECT TO START");
+  tft.setCursor(50,130);tft.print("LEFT/RIGHT: MOVE LANES");
+  tft.setCursor(70,150);tft.print("SELECT: PAUSE/RESUME");
+  tft.setCursor(70,170);tft.print("B: BACK TO MENU");
+  while(digitalRead(BTN_SELECT)==HIGH&&digitalRead(BTN_B)==HIGH) delay(10);
+  if(digitalRead(BTN_B)==LOW){delay(200);returnToMenu();return;}
+  delay(300);crResetGame();
+}
+void runCarRacingGame(){
+  if(crGameOver){
+    if(digitalRead(BTN_SELECT)==LOW){delay(200);crResetGame();}
+    if(digitalRead(BTN_B)==LOW){delay(200);returnToMenu();}
+    return;
+  }
+  // Pause
+  bool selPress=digitalRead(BTN_SELECT)==LOW&&millis()-crLastButtonPress>crDebounceDelay;
+  bool staPress=digitalRead(BTN_START)==LOW&&millis()-crLastButtonPress>crDebounceDelay;
+  if(selPress||staPress){
+    crLastButtonPress=millis();
+    crIsPaused=!crIsPaused;
+    if(crIsPaused){
+      tft.fillRoundRect(80,90,160,50,10,TFT_BLUE);tft.drawRoundRect(80,90,160,50,10,TFT_WHITE);
+      tft.setTextColor(TFT_WHITE);tft.setTextSize(2);tft.setCursor(125,105);tft.print("PAUSED");
+      tft.setTextSize(1);tft.setCursor(115,125);tft.print("PRESS START");
+    } else{tft.fillRect(80,90,160,50,CR_ROAD_GRAY);crDrawRoadBase();}
+  }
+  if(digitalRead(BTN_B)==LOW&&millis()-crLastButtonPress>crDebounceDelay){crLastButtonPress=millis();crGameOver=true;returnToMenu();return;}
+  if(crIsPaused){delay(10);return;}
+
+  crHandleLaneChange();
+  if(abs(crCurrentPlayerX-crTargetX)>2){
+    if(crCurrentPlayerX<crTargetX) crCurrentPlayerX+=crSlideSpeed;
+    else crCurrentPlayerX-=crSlideSpeed;
+  } else crCurrentPlayerX=crTargetX;
+
+  tft.fillRect(crLaneX[crEnemyLane]-25,(int)crEnemyY-5,50,(int)crGameSpeed+8,CR_ROAD_GRAY);
+  crEnemyY+=crGameSpeed;
+
+  if(crEnemyY>250){
+    tft.fillRect(crLaneX[crEnemyLane]-25,200,50,40,CR_ROAD_GRAY);
+    crScore+=crVehiclePoints[crEnemyType];
+    crEnemyY=-80;crEnemyLane=random(0,3);crEnemyType=random(0,5);
+    crGameSpeed+=0.05;if(crGameSpeed>8.0)crGameSpeed=8.0;
+  }
+
+  if(abs(crCurrentPlayerX-crLaneX[crEnemyLane])<25&&
+     (crEnemyY+crVehicleHeights[crEnemyType])>195&&crEnemyY<225){
+    crTriggerCrash((int)crCurrentPlayerX);crGameOver=true;crShowGameOver();return;
+  }
+
+  crLineOffset=(crLineOffset+(int)crGameSpeed)%48;
+  for(int i=-48;i<240;i+=48){
+    tft.fillRect(115,i+crLineOffset,3,24,CR_LINE_YELLOW);
+    tft.fillRect(202,i+crLineOffset,3,24,CR_LINE_YELLOW);
+    tft.fillRect(115,i+crLineOffset-6,3,6,CR_ROAD_GRAY);
+    tft.fillRect(202,i+crLineOffset-6,3,6,CR_ROAD_GRAY);
+  }
+
+  crDrawPlayer(crCurrentPlayerX);
+  crDrawEnemy(crEnemyLane,(int)crEnemyY,crEnemyType);
+
+  tft.fillRect(250,5,65,15,CR_GRASS_BLACK);
+  tft.setTextColor(TFT_WHITE);tft.setTextSize(1);tft.setCursor(255,8);
+  tft.print("S:");tft.setTextColor(CR_LINE_YELLOW);tft.print(crScore);
+
+  delay(16);
 }
 
 // ================================================================
@@ -1501,12 +1920,17 @@ void setup(){
   pinMode(BTN_START, INPUT_PULLUP);
   pinMode(BTN_SELECT,INPUT_PULLUP);
 
+  EEPROM.begin(512);
+  // Load car racing high score from EEPROM (address 1)
+  int storedCR = EEPROM.read(1);
+  if(storedCR != 255) { crHighScore = storedCR; menuHighScores[8] = crHighScore; }
+
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
 
-  screenWidth =tft.width();
-  screenHeight=tft.height();
+  screenWidth  = tft.width();
+  screenHeight = tft.height();
 
   randomSeed(analogRead(34));
   initDots();
@@ -1514,49 +1938,53 @@ void setup(){
 }
 
 void loop(){
-  static unsigned long lastBtnTime=0;
-  static bool upPressed=false,downPressed=false;
+  static unsigned long lastBtnTime = 0;
+  static bool upPressed = false, downPressed = false;
 
   switch(currentGame){
 
     case GAME_MENU:{
-      if(digitalRead(BTN_UP)==LOW&&!upPressed&&millis()-lastBtnTime>200){
-        lastBtnTime=millis();upPressed=true;
+      if(digitalRead(BTN_UP)==LOW && !upPressed && millis()-lastBtnTime>200){
+        lastBtnTime=millis(); upPressed=true;
         int old=selectedGame;
         selectedGame=(selectedGame>0)?selectedGame-1:MENU_ITEMS-1;
-        updateMenuSelection(old,selectedGame);
+        updateMenuSelection(old, selectedGame);
       } else if(digitalRead(BTN_UP)==HIGH) upPressed=false;
 
-      if(digitalRead(BTN_DOWN)==LOW&&!downPressed&&millis()-lastBtnTime>200){
-        lastBtnTime=millis();downPressed=true;
+      if(digitalRead(BTN_DOWN)==LOW && !downPressed && millis()-lastBtnTime>200){
+        lastBtnTime=millis(); downPressed=true;
         int old=selectedGame;
         selectedGame=(selectedGame<MENU_ITEMS-1)?selectedGame+1:0;
-        updateMenuSelection(old,selectedGame);
+        updateMenuSelection(old, selectedGame);
       } else if(digitalRead(BTN_DOWN)==HIGH) downPressed=false;
 
-      if(digitalRead(BTN_A)==LOW&&millis()-lastBtnTime>200){
+      if(digitalRead(BTN_A)==LOW && millis()-lastBtnTime>200){
         lastBtnTime=millis();
         switch(selectedGame){
-          case 0: currentGame=GAME_SNAKE;    resetSnakeGame();         break;
-          case 1: currentGame=GAME_FLAPPY;   showStartScreenFlappy();  break;
-          case 2: currentGame=GAME_CONNECT4; resetGameC4();            break;
-          case 3: currentGame=GAME_TICTACTOE;resetTTTGame();           break;
+          case 0: currentGame=GAME_SNAKE;     resetSnakeGame();         break;
+          case 1: currentGame=GAME_FLAPPY;    showStartScreenFlappy();  break;
+          case 2: currentGame=GAME_CONNECT4;  resetGameC4();            break;
+          case 3: currentGame=GAME_TICTACTOE; resetTTTGame();           break;
           case 4: currentGame=GAME_RPS;
                   drawMintBackground();updateScoreRPS();drawSelectionBoxes(); break;
-          case 5: currentGame=GAME_NINJA;    showStartScreenNinja();   break;
-          case 6: currentGame=GAME_PONG;     showStartScreenPong();    break;
+          case 5: currentGame=GAME_NINJA;     showStartScreenNinja();   break;
+          case 6: currentGame=GAME_PONG;      showStartScreenPong();    break;
+          case 7: currentGame=GAME_SPERMRACE; showStartScreenSperm();   break;
+          case 8: currentGame=GAME_CARRACING; showStartScreenCar();     break;
         }
       }
       break;
     }
 
-    case GAME_SNAKE:    runSnakeGame();    break;
-    case GAME_FLAPPY:   runFlappyGame();   break;
-    case GAME_CONNECT4: runConnect4Game(); break;
-    case GAME_TICTACTOE:runTicTacToe();    break;
-    case GAME_RPS:      runRPSGame();      break;
-    case GAME_NINJA:    runNinjaGame();    break;
-    case GAME_PONG:     runPongGame();     break;
+    case GAME_SNAKE:     runSnakeGame();      break;
+    case GAME_FLAPPY:    runFlappyGame();     break;
+    case GAME_CONNECT4:  runConnect4Game();   break;
+    case GAME_TICTACTOE: runTicTacToe();      break;
+    case GAME_RPS:       runRPSGame();        break;
+    case GAME_NINJA:     runNinjaGame();      break;
+    case GAME_PONG:      runPongGame();       break;
+    case GAME_SPERMRACE: runSpermRaceGame();  break;
+    case GAME_CARRACING: runCarRacingGame();  break;
   }
 
   delay(10);
