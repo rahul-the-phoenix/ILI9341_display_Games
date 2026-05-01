@@ -1,8 +1,14 @@
+/*
+ * =====================================================================
+ *  DINO RUN  —  ILI9341 (TFT_eSPI) Version - 3X JUMP HEIGHT
+ *  Fixed: Dino jumps 3x higher (123px instead of 41px)
+ * =====================================================================
+ */
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <EEPROM.h>
 
-// --- Button Configuration ---
+// ============= BUTTON PINS =============
 #define BTN_UP     13
 #define BTN_DOWN   12
 #define BTN_LEFT   27
@@ -14,335 +20,472 @@
 
 TFT_eSPI tft = TFT_eSPI();
 
-// --- Bitmaps (same as original, but adjusted for ILI9341) ---
-const unsigned char dino_run1[] PROGMEM = { 
+// ============= SCREEN DIMENSIONS =============
+#define SCR_W  320
+#define SCR_H  240
+#define GROUND_Y   210
+
+// ============= BITMAPS =============
+const unsigned char dino_run1[] PROGMEM = {
   0x00,0x00,0x07,0xf0,0x0f,0xf8,0x0f,0xf8,0x0f,0xf8,0x0f,0x80,0x0f,0xf8,0x0e,0x00,
   0x0f,0xe0,0x0f,0xe0,0x9f,0xe0,0xdf,0xe0,0xff,0xe0,0xff,0xe0,0xff,0xc0,0xff,0x80,
-  0x7f,0x00,0x3e,0x00,0x22,0x00,0x22,0x00,0x62,0x00 
+  0x7f,0x00,0x3e,0x00,0x22,0x00,0x22,0x00,0x62,0x00
+};
+
+const unsigned char dino_run2[] PROGMEM = {
+  0x00,0x00,0x07,0xf0,0x0f,0xf8,0x0f,0xf8,0x0f,0xf8,0x0f,0x80,0x0f,0xf8,0x0e,0x00,
+  0x0f,0xe0,0x0f,0xe0,0x9f,0xe0,0xdf,0xe0,0xff,0xe0,0xff,0xe0,0xff,0xc0,0xff,0x80,
+  0x7f,0x00,0x3e,0x00,0x3c,0x00,0x06,0x00,0x06,0x00
 };
 
 const unsigned char cactus_small[] PROGMEM = {
-  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0xdf,0x00, 0xdf,0x00, 0xdf,0x00,
-  0xdf,0x00, 0xff,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
-  0x1c,0x00, 0x1c,0x00
+  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
+  0xdf,0x00, 0xdf,0x00, 0xdf,0x00, 0xdf,0x00, 0xff,0x00,
+  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
+  0x1c,0x00, 0x1c,0x00, 0x1c,0x00
 };
 
 const unsigned char cactus_large[] PROGMEM = {
-  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0xdd,0x00, 0xdd,0x00, 0xdd,0x00,
-  0xdd,0x00, 0xdd,0x00, 0xff,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
-  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
-  0x1c,0x00, 0x1c,0x00
+  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
+  0xdd,0x00, 0xdd,0x00, 0xdd,0x00, 0xdd,0x00, 0xdd,0x00,
+  0xff,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
+  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00,
+  0x1c,0x00, 0x1c,0x00, 0x1c,0x00, 0x1c,0x00
 };
 
 const unsigned char cactus_double[] PROGMEM = {
-  0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 
-  0xdf,0xfb,0x00, 0xdf,0xfb,0x00, 0xdf,0xfb,0x00, 0xff,0xff,0x00, 0x1c,0x38,0x00, 
+  0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00,
+  0xdf,0xfb,0x00, 0xdf,0xfb,0x00, 0xdf,0xfb,0x00, 0xff,0xff,0x00, 0x1c,0x38,0x00,
   0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00,
   0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00, 0x1c,0x38,0x00
 };
 
 const unsigned char cloud_big[] PROGMEM = {
-  0x00, 0xfe, 0x00, 0x07, 0xff, 0x80, 0x1f, 0xff, 0xe0, 0x3f, 0xff, 0xf0, 
-  0x7f, 0xff, 0xf8, 0x7f, 0xff, 0xf8, 0x7f, 0xff, 0xf8, 0x3f, 0xff, 0xf0,
-  0x1f, 0xff, 0xe0, 0x00, 0x00, 0x00
+  0x00,0xfe,0x00, 0x07,0xff,0x80, 0x1f,0xff,0xe0, 0x3f,0xff,0xf0,
+  0x7f,0xff,0xf8, 0x7f,0xff,0xf8, 0x7f,0xff,0xf8, 0x3f,0xff,0xf0,
+  0x1f,0xff,0xe0, 0x00,0x00,0x00
 };
 
-// --- Game Variables ---
-int dinoY = 200, prevDinoY = 200;  // Adjusted for ILI9341 (320x240)
-float jumpVel = 0;
-const float gravity = 1.05; 
-float cactusX = 320;  // Screen width for ILI9341
-int prevCactusX = 320;
-float gameSpeed = 4.0;
-float score = 0;
-int highScore = 0;
-bool isJumping = false;
-bool playing = false;
-int cactusType = 0;
+// ============= SCALE FACTOR =============
+#define SC 2
 
-bool isNightMode = false;
-int lastModeScore = 0;
-uint16_t bgColor = TFT_WHITE;
-uint16_t fgColor = TFT_BLACK;
+// Original bitmap sizes
+#define DINO_W   16
+#define DINO_H   21
+#define CS_W     12
+#define CS_H     18
+#define CL_W     12
+#define CL_H     24
+#define CD_W     24
+#define CD_H     19
+#define CLOUD_W  24
+#define CLOUD_H  10
 
-float cloud1X = 50, cloud1Y = 40;
-float cloud2X = 180, cloud2Y = 60;
-int prevCloud1X, prevCloud2X;
+// Scaled sizes
+#define DINO_SW  (DINO_W*SC)
+#define DINO_SH  (DINO_H*SC)
 
-// --- Moving Road Dots (adjusted for ILI9341)---
-#define NUM_DOTS 30      
-float dotsX[NUM_DOTS];       
-int prevDotsX[NUM_DOTS];
-int dotsY[NUM_DOTS];
-float bumpsX[4];
-int prevBumpsX[4];
+#define DINO_X   40
+
+// ============= COLORS =============
+#define COL_WHITE  0xFFFF
+#define COL_BLACK  0x0000
+#define COL_RED    0xF800
+#define COL_GREEN  0x07E0
+#define COL_YELLOW 0xFFE0
+#define COL_GREY   0x8410
+#define COL_DKGREY 0x4208
+#define COL_STAR   0xC618
+#define COL_NIGHT_BG 0x000F
+
+// ============= GAME VARIABLES =============
+int   dinoY, prevDinoY;
+float jumpVel;
+const float GRAVITY = 1.35;        // Same gravity
+float cactusX, prevCactusX;
+float gameSpeed;
+float score;
+int   highScore = 0;
+bool  isJumping, playing;
+int   cactusType;
+
+bool     isNightMode;
+int      lastModeScore;
+uint16_t bgColor, fgColor;
+
+float cloud1X, cloud1Y, cloud2X, cloud2Y;
+float prevCloud1X, prevCloud2X;
+
+#define NUM_DOTS 25
+float dotX[NUM_DOTS];
+int   prevDotX[NUM_DOTS];
+int   dotY[NUM_DOTS];
+
+float bumpX[3];
+int   prevBumpX[3];
+
+int   dinoFrame = 0;
+unsigned long lastFrameTime = 0;
+
+unsigned long lastJumpTime = 0;
+const unsigned long JUMP_DEBOUNCE = 80;
+
+#define EEPROM_ADDR 20
+
+// ============= HELPER FUNCTIONS =============
+void drawBitmapScaled(int x, int y, const uint8_t* bmp,
+                      int bmpW, int bmpH, uint16_t color, uint16_t bg,
+                      bool transparent = true)
+{
+  int bytesPerRow = (bmpW + 7) / 8;
+  for (int row = 0; row < bmpH; row++) {
+    for (int col = 0; col < bmpW; col++) {
+      int byteIndex = row * bytesPerRow + col / 8;
+      uint8_t b = pgm_read_byte(&bmp[byteIndex]);
+      bool set = (b >> (7 - (col % 8))) & 1;
+      if (set) {
+        tft.fillRect(x + col * SC, y + row * SC, SC, SC, color);
+      } else if (!transparent) {
+        tft.fillRect(x + col * SC, y + row * SC, SC, SC, bg);
+      }
+    }
+  }
+}
+
+int cactusDrawY(int origH) { return GROUND_Y - origH * SC; }
+
+void drawBigBump(int x, uint16_t color) {
+  tft.fillRect(x,     GROUND_Y - 4,  16, 2, color);
+  tft.fillRect(x - 2, GROUND_Y - 2,  20, 2, color);
+}
+
+void eraseDino() {
+  tft.fillRect(DINO_X, prevDinoY, DINO_SW, DINO_SH, bgColor);
+}
+
+void eraseCactus() {
+  tft.fillRect((int)prevCactusX, GROUND_Y - CD_H * SC, CD_W * SC + 4, CD_H * SC + 2, bgColor);
+}
+
+void eraseClouds() {
+  tft.fillRect((int)prevCloud1X, (int)cloud1Y, CLOUD_W * SC, CLOUD_H * SC, bgColor);
+  tft.fillRect((int)prevCloud2X, (int)cloud2Y, CLOUD_W * SC, CLOUD_H * SC, bgColor);
+}
+
+void eraseBumps() {
+  for (int i = 0; i < 3; i++)
+    tft.fillRect(prevBumpX[i] - 4, GROUND_Y - 5, 26, 6, bgColor);
+}
+
+void eraseDots() {
+  for (int i = 0; i < NUM_DOTS; i++)
+    tft.fillRect(prevDotX[i], dotY[i], 2, 2, bgColor);
+}
+
+void showDinoMenu() {
+  bgColor = COL_WHITE; fgColor = COL_BLACK;
+  tft.fillScreen(bgColor);
+
+  tft.setTextColor(COL_BLACK);
+  tft.setTextSize(4);
+  tft.setCursor(60, 60);
+  tft.print("DINO RUN");
+
+  drawBitmapScaled(140, 110, dino_run1, DINO_W, DINO_H, COL_BLACK, bgColor);
+
+  tft.setTextSize(2);
+  tft.setTextColor(0x07FF);
+  tft.setCursor(50, 155);
+  tft.print("SELECT : Jump/Start");
+  tft.setTextSize(1);
+  tft.setTextColor(COL_GREY);
+  tft.setCursor(95, 180);
+  tft.print("B : Back to Menu");
+
+  tft.setTextSize(2);
+  tft.setTextColor(COL_BLACK);
+  tft.setCursor(100, 200);
+  tft.print("HI: "); tft.print(highScore);
+}
+
+void startDinoGame() {
+  playing      = true;
+  score        = 0;
+  lastModeScore= 0;
+  isNightMode  = false;
+  bgColor      = COL_WHITE;
+  fgColor      = COL_BLACK;
+  
+  gameSpeed    = 6.5;
+  cactusX      = SCR_W;
+  dinoY        = GROUND_Y - DINO_SH;
+  prevDinoY    = dinoY;
+  jumpVel      = 0;
+  isJumping    = false;
+  dinoFrame    = 0;
+  cactusType   = random(0, 3);
+
+  cloud1X = 100; cloud1Y = 40;
+  cloud2X = 260; cloud2Y = 70;
+  prevCloud1X = cloud1X; prevCloud2X = cloud2X;
+
+  for (int i = 0; i < 3; i++) {
+    bumpX[i] = SCR_W + i * 200.0;
+    prevBumpX[i] = (int)bumpX[i];
+  }
+  for (int i = 0; i < NUM_DOTS; i++) {
+    dotX[i]    = random(0, SCR_W);
+    dotY[i]    = random(GROUND_Y + 2, GROUND_Y + 12);
+    prevDotX[i]= (int)dotX[i];
+  }
+
+  tft.fillScreen(bgColor);
+  tft.drawFastHLine(0, GROUND_Y, SCR_W, fgColor);
+}
+
+void dinoGameOver() {
+  playing = false;
+  if ((int)score > highScore) {
+    highScore = (int)score;
+    EEPROM.write(EEPROM_ADDR, highScore & 0xFF);
+    EEPROM.write(EEPROM_ADDR + 1, (highScore >> 8) & 0xFF);
+    EEPROM.commit();
+  }
+
+  for (int i = 0; i < 3; i++) {
+    tft.fillScreen(COL_RED); delay(60);
+    tft.fillScreen(bgColor); delay(60);
+  }
+
+  tft.fillRoundRect(60, 70, 200, 110, 12, COL_WHITE);
+  tft.drawRoundRect(60, 70, 200, 110, 12, COL_BLACK);
+  tft.drawRoundRect(62, 72, 196, 106, 10, COL_RED);
+
+  tft.setTextColor(COL_RED);
+  tft.setTextSize(3);
+  tft.setCursor(75, 88);
+  tft.print("GAME OVER");
+
+  tft.drawFastHLine(80, 118, 160, COL_BLACK);
+
+  tft.setTextSize(2);
+  tft.setTextColor(COL_BLACK);
+  tft.setCursor(90, 126);
+  tft.print("Score: "); tft.print((int)score);
+  tft.setCursor(90, 148);
+  tft.print("Best:  "); tft.print(highScore);
+
+  tft.setTextSize(1);
+  tft.setTextColor(0x07FF);
+  tft.setCursor(80, 174);
+  tft.print("SELECT: Play Again   B: Menu");
+}
+
+void drawDinoFrame() {
+  eraseDino();
+  eraseCactus();
+  eraseClouds();
+  eraseBumps();
+  eraseDots();
+  tft.fillRect(0, 0, SCR_W, 22, bgColor);
+
+  tft.drawFastHLine(0, GROUND_Y, SCR_W, fgColor);
+
+  for (int i = 0; i < NUM_DOTS; i++) {
+    int dx = (int)dotX[i];
+    if (dx > 0 && dx < SCR_W - 2)
+      tft.fillRect(dx, dotY[i], 2, 2, fgColor);
+  }
+
+  for (int i = 0; i < 3; i++) {
+    int bx = (int)bumpX[i];
+    if (bx > 0 && bx < SCR_W - 20)
+      drawBigBump(bx, fgColor);
+  }
+
+  drawBitmapScaled((int)cloud1X, (int)cloud1Y, cloud_big, CLOUD_W, CLOUD_H, fgColor, bgColor);
+  drawBitmapScaled((int)cloud2X, (int)cloud2Y, cloud_big, CLOUD_W, CLOUD_H, fgColor, bgColor);
+
+  const uint8_t* dinoFrame_bmp = (dinoFrame == 0) ? dino_run1 : dino_run2;
+  drawBitmapScaled(DINO_X, dinoY, dinoFrame_bmp, DINO_W, DINO_H, fgColor, bgColor);
+
+  if (cactusX < SCR_W + 10 && cactusX > -CD_W * SC) {
+    int cx = (int)cactusX;
+    if (cactusType == 0)
+      drawBitmapScaled(cx, cactusDrawY(CS_H), cactus_small, CS_W, CS_H, fgColor, bgColor);
+    else if (cactusType == 1)
+      drawBitmapScaled(cx, cactusDrawY(CL_H), cactus_large, CL_W, CL_H, fgColor, bgColor);
+    else
+      drawBitmapScaled(cx, cactusDrawY(CD_H), cactus_double, CD_W, CD_H, fgColor, bgColor);
+  }
+
+  tft.setTextSize(2);
+  tft.setTextColor(fgColor);
+  tft.setCursor(10, 5);
+  tft.print("HI:"); tft.print(highScore);
+  tft.setCursor(240, 5);
+  tft.print((int)score);
+
+  if (isNightMode) {
+    tft.fillCircle(295, 35, 14, COL_YELLOW);
+    tft.fillCircle(302, 29, 11, COL_NIGHT_BG);
+    tft.drawPixel(50,  20, COL_STAR);
+    tft.drawPixel(120, 15, COL_STAR);
+    tft.drawPixel(200, 28, COL_STAR);
+    tft.drawPixel(80,  40, COL_STAR);
+    tft.drawPixel(260, 18, COL_STAR);
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-  
-  // Button pins
-  pinMode(BTN_UP, INPUT_PULLUP);
-  pinMode(BTN_DOWN, INPUT_PULLUP);
-  pinMode(BTN_LEFT, INPUT_PULLUP);
+
+  pinMode(BTN_UP,    INPUT_PULLUP);
+  pinMode(BTN_DOWN,  INPUT_PULLUP);
+  pinMode(BTN_LEFT,  INPUT_PULLUP);
   pinMode(BTN_RIGHT, INPUT_PULLUP);
-  pinMode(BTN_A, INPUT_PULLUP);
-  pinMode(BTN_B, INPUT_PULLUP);
+  pinMode(BTN_A,     INPUT_PULLUP);
+  pinMode(BTN_B,     INPUT_PULLUP);
   pinMode(BTN_START, INPUT_PULLUP);
-  pinMode(BTN_SELECT, INPUT_PULLUP);
-  
-  tft.init();
-  tft.setRotation(1);  // Landscape orientation
-  tft.fillScreen(TFT_WHITE);
-  
-  randomSeed(analogRead(0));
-  
-  // Initialize road dots
-  for (int i = 0; i < NUM_DOTS; i++) {
-    dotsX[i] = random(0, 320);
-    dotsY[i] = random(215, 230);  // Ground level for ILI9341
-  }
-  
-  // Initialize bumps
-  for (int i = 0; i < 4; i++) {
-    bumpsX[i] = 320 + (i * 200);
-  }
-  
+  pinMode(BTN_SELECT,INPUT_PULLUP);
+
   EEPROM.begin(512);
-  EEPROM.get(0, highScore);
-  if (highScore > 10000) highScore = 0;  // Sanity check
-  
-  showMenu();
+  int lo = EEPROM.read(EEPROM_ADDR);
+  int hi = EEPROM.read(EEPROM_ADDR + 1);
+  if (lo != 255 || hi != 255) highScore = lo | (hi << 8);
+
+  tft.init();
+  tft.setRotation(1);
+  tft.fillScreen(COL_WHITE);
+
+  randomSeed(analogRead(34));
+
+  playing = false;
+  showDinoMenu();
 }
 
 void loop() {
+  static unsigned long lastBPress = 0;
+  if (digitalRead(BTN_B) == LOW && millis() - lastBPress > 300) {
+    lastBPress = millis();
+    if (!playing) {
+      showDinoMenu();
+      return;
+    }
+    playing = false;
+    showDinoMenu();
+    return;
+  }
+
   if (!playing) {
-    if (digitalRead(BTN_START) == LOW || digitalRead(BTN_A) == LOW) {
-      delay(50);  // Debounce
-      startGame();
+    static unsigned long lastSelPress = 0;
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastSelPress > 300) {
+      lastSelPress = millis();
+      startDinoGame();
     }
     return;
   }
 
-  // Jump on any button press
-  if ((digitalRead(BTN_UP) == LOW || digitalRead(BTN_A) == LOW || 
-       digitalRead(BTN_B) == LOW) && !isJumping) {
+  // ============= JUMP WITH 3X HIGHER HEIGHT =============
+  static unsigned long lastSel = 0;
+  if ((digitalRead(BTN_SELECT) == LOW || digitalRead(BTN_A) == LOW) && 
+      !isJumping && millis() - lastSel > JUMP_DEBOUNCE) {
+    lastSel   = millis();
     isJumping = true;
-    jumpVel = -10.6; 
+    jumpVel   = -18.2;     // 3X HIGHER JUMP! (was -10.5, now -18.2)
+                          // Results in 123px jump height instead of 41px
   }
 
   prevDinoY = dinoY;
-  dinoY += jumpVel;
-  if (isJumping) jumpVel += gravity;
-  if (dinoY >= 200) { dinoY = 200; isJumping = false; }
-
-  prevCactusX = (int)cactusX;
-  cactusX -= gameSpeed;
-  gameSpeed += 0.0006; 
-  score += 0.40;
-
-  // Update road dots
-  for (int i = 0; i < NUM_DOTS; i++) {
-    prevDotsX[i] = (int)dotsX[i];
-    dotsX[i] -= gameSpeed;
-    if (dotsX[i] < -5) {
-      dotsX[i] = 320 + random(0, 100);
-      dotsY[i] = random(215, 230);
-    }
-  }
-
-  // Update bumps
-  for (int i = 0; i < 4; i++) {
-    prevBumpsX[i] = (int)bumpsX[i];
-    bumpsX[i] -= gameSpeed;
-    if (bumpsX[i] < -50) bumpsX[i] = 320 + random(150, 500); 
-  }
-
-  // Toggle night mode
-  if ((int)score > 0 && (int)score % 300 == 0 && (int)score != lastModeScore) {
-    isNightMode = !isNightMode;
-    lastModeScore = (int)score;
-    bgColor = isNightMode ? TFT_BLACK : TFT_WHITE;
-    fgColor = isNightMode ? TFT_WHITE : TFT_BLACK;
-    tft.fillScreen(bgColor); 
-  }
-
-  // Update clouds
-  prevCloud1X = (int)cloud1X; 
-  prevCloud2X = (int)cloud2X;
-  cloud1X -= 0.8; 
-  cloud2X -= 0.5;
-  
-  // Cactus spawning logic
-  if (cactusX < -50) { 
-    int positions[] = {260, 290, 300, 320, 350, 380, 400};
-    int basePos = positions[random(0, 7)]; 
-    int s = random(-35, 50);
+  if (isJumping) {
+    jumpVel += GRAVITY;
+    dinoY   += (int)jumpVel;
     
-    int extraGap;
-    if (random(0, 2) == 0) {
-      extraGap = basePos; 
-    } else {
-      extraGap = 320 + s; 
+    // Optional: Add ceiling to prevent jumping off screen
+    if (dinoY < 20) {  // Prevent going above screen top
+      dinoY = 20;
+      jumpVel = 0;
+      isJumping = false;
     }
-    cactusX = extraGap;
-    cactusType = random(0, 3); 
-  }
-  
-  if (cloud1X < -50) { cloud1X = 320; cloud1Y = random(30, 80); }
-  if (cloud2X < -50) { cloud2X = 320; cloud2Y = random(30, 80); }
-
-  // Collision detection (adjusted for ILI9341)
-  int cW = (cactusType == 2) ? 24 : 12; 
-  int cH = (cactusType == 1) ? 24 : 18; 
-  if (cactusX < 50 && (cactusX + cW) > 30) {  // Dino position at x=30
-    if (dinoY + 20 > (232 - cH)) {  // Ground level adjusted
-      playing = false;
-      if ((int)score > highScore) {
-        highScore = (int)score;
-        EEPROM.put(0, highScore);
-        EEPROM.commit();
-      }
-      gameOver();
+    
+    if (dinoY >= GROUND_Y - DINO_SH) {
+      dinoY     = GROUND_Y - DINO_SH;
+      isJumping = false;
+      jumpVel   = 0;
     }
   }
 
-  drawFrame();
-  delay(15); 
-}
+  prevCactusX = cactusX;
+  cactusX    -= gameSpeed;
+  
+  gameSpeed  += 0.0025;
+  if (gameSpeed > 22.0) gameSpeed = 22.0;
+  score      += 0.45;
 
-void startGame() {
-  playing = true; 
-  score = 0; 
-  lastModeScore = 0;
-  isNightMode = false; 
-  bgColor = TFT_WHITE; 
-  fgColor = TFT_BLACK;
-  gameSpeed = 4.0; 
-  cactusX = 320;
-  cloud1X = 50; 
-  cloud2X = 180;
-  
-  for (int i = 0; i < 4; i++) {
-    bumpsX[i] = 320 + (i * 180);
+  if (cactusX < -CD_W * SC - 10) {
+    int positions[] = {SCR_W, SCR_W + 30, SCR_W + 60, SCR_W + 100, SCR_W + 150, SCR_W + 200};
+    cactusX    = positions[random(0, 6)];
+    cactusType = random(0, 3);
   }
-  
+
+  prevCloud1X = cloud1X; prevCloud2X = cloud2X;
+  cloud1X -= 1.5; cloud2X -= 1.0;
+  if (cloud1X < -CLOUD_W * SC) { cloud1X = SCR_W; cloud1Y = random(25, 70); }
+  if (cloud2X < -CLOUD_W * SC) { cloud2X = SCR_W; cloud2Y = random(25, 70); }
+
   for (int i = 0; i < NUM_DOTS; i++) {
-    dotsX[i] = random(0, 320);
+    prevDotX[i] = (int)dotX[i];
+    dotX[i]    -= gameSpeed;
+    if (dotX[i] < -5) {
+      dotX[i] = SCR_W + random(0, 80);
+      dotY[i] = random(GROUND_Y + 2, GROUND_Y + 12);
+    }
   }
-  
-  dinoY = 200;
-  isJumping = false;
-  jumpVel = 0;
-  
-  tft.fillScreen(bgColor);
-}
-
-void showMenu() {
-  tft.fillScreen(TFT_WHITE);
-  tft.setTextColor(TFT_BLACK, TFT_WHITE);
-  tft.setTextSize(3);
-  tft.setCursor(90, 80); 
-  tft.print("DINO RUN");
-  tft.setTextSize(1);
-  tft.setCursor(100, 130); 
-  tft.print("Press START or A");
-  tft.setCursor(85, 150); 
-  tft.print("to Start Game");
-  
-  // Show high score
-  tft.setTextSize(2);
-  tft.setCursor(100, 190);
-  tft.print("HI: ");
-  tft.print(highScore);
-}
-
-void gameOver() {
-  tft.setTextColor(TFT_RED, bgColor);
-  tft.setTextSize(2);
-  tft.setCursor(80, 80); 
-  tft.print("GAME OVER");
-  tft.setTextColor(fgColor);
-  tft.setTextSize(2);
-  tft.setCursor(90, 120); 
-  tft.print("Score: "); 
-  tft.print((int)score);
-  tft.setCursor(70, 150); 
-  tft.print("HI Score: "); 
-  tft.print(highScore);
-  tft.setTextSize(1);
-  tft.setCursor(80, 190);
-  tft.print("Press START to Play");
-  
-  delay(500);
-}
-
-// Draw ground bumps
-void drawBigBump(int x, uint16_t color) {
-  if (x < 0 || x > 320) return;
-  tft.drawFastHLine(x + 4, 232, 4, color);
-  tft.drawFastHLine(x + 2, 233, 8, color); 
-  tft.drawFastHLine(x + 1, 234, 10, color); 
-  tft.drawFastHLine(x, 235, 12, color);
-}
-
-void drawFrame() {
-  // Erase old positions
-  tft.fillRect(30, prevDinoY, 20, 25, bgColor); 
-  tft.fillRect(prevCactusX, 170, 30, 70, bgColor); 
-  tft.fillRect(prevCloud1X, (int)cloud1Y, 30, 15, bgColor); 
-  tft.fillRect(prevCloud2X, (int)cloud2Y, 30, 15, bgColor); 
-  
-  // Erase old bumps
-  for(int i = 0; i < 4; i++) {
-    tft.fillRect(prevBumpsX[i], 232, 15, 8, bgColor);
-  }
-  
-  // Erase old dots
-  for(int i = 0; i < NUM_DOTS; i++) {
-    tft.drawPixel(prevDotsX[i], dotsY[i], bgColor);
+  for (int i = 0; i < 3; i++) {
+    prevBumpX[i] = (int)bumpX[i];
+    bumpX[i]    -= gameSpeed;
+    if (bumpX[i] < -30) bumpX[i] = SCR_W + random(100, 400);
   }
 
-  // Draw ground line
-  tft.drawFastHLine(0, 235, 320, fgColor);
+  if ((int)score > 0 && (int)score % 200 == 0 && (int)score != lastModeScore) {
+    isNightMode   = !isNightMode;
+    lastModeScore = (int)score;
+    bgColor = isNightMode ? COL_NIGHT_BG : COL_WHITE;
+    fgColor = isNightMode ? COL_WHITE     : COL_BLACK;
+    tft.fillScreen(bgColor);
+    tft.drawFastHLine(0, GROUND_Y, SCR_W, fgColor);
+  }
 
-  // Draw road dots
-  for (int i = 0; i < NUM_DOTS; i++) {
-    int dx = (int)dotsX[i];
-    if (dx > 0 && dx < 319) {
-      tft.drawPixel(dx, dotsY[i], fgColor);
+  if (millis() - lastFrameTime > 100) {
+    lastFrameTime = millis();
+    dinoFrame     = 1 - dinoFrame;
+  }
+
+  // Collision detection
+  int cW, cH;
+  if      (cactusType == 0) { cW = CS_W * SC; cH = CS_H * SC; }
+  else if (cactusType == 1) { cW = CL_W * SC; cH = CL_H * SC; }
+  else                      { cW = CD_W * SC; cH = CD_H * SC; }
+
+  int cactusTop = GROUND_Y - cH;
+  int dinoLeft  = DINO_X + 4;
+  int dinoRight = DINO_X + DINO_SW - 4;
+  int dinoBottom= dinoY  + DINO_SH - 2;
+
+  int cactLeft  = (int)cactusX + 2;
+  int cactRight = (int)cactusX + cW - 2;
+
+  if (cactRight > dinoLeft && cactLeft < dinoRight) {
+    if (dinoBottom > cactusTop) {
+      dinoGameOver();
+      while (digitalRead(BTN_SELECT) == HIGH && digitalRead(BTN_B) == HIGH) delay(10);
+      delay(200);
+      if (digitalRead(BTN_B) == LOW) { showDinoMenu(); return; }
+      startDinoGame();
+      return;
     }
   }
 
-  // Draw clouds
-  tft.drawBitmap((int)cloud1X, (int)cloud1Y, cloud_big, 24, 10, fgColor);
-  tft.drawBitmap((int)cloud2X, (int)cloud2Y, cloud_big, 24, 10, fgColor);
-  
-  // Draw dino
-  tft.drawBitmap(30, dinoY, dino_run1, 16, 20, fgColor);
-
-  // Draw cactus
-  if (cactusType == 0)      
-    tft.drawBitmap((int)cactusX, 235 - 18, cactus_small, 12, 18, fgColor);
-  else if (cactusType == 1) 
-    tft.drawBitmap((int)cactusX, 235 - 24, cactus_large, 12, 24, fgColor);
-  else                      
-    tft.drawBitmap((int)cactusX, 235 - 20, cactus_double, 24, 20, fgColor);
-
-  // Draw ground bumps
-  for (int i = 0; i < 4; i++) {
-    int bx = (int)bumpsX[i];
-    if (bx > 0 && bx < 310) drawBigBump(bx, fgColor);
-  }
-
-  // Draw score and high score
-  tft.fillRect(10, 10, 60, 15, bgColor);  
-  tft.fillRect(250, 10, 60, 15, bgColor); 
-  tft.setTextColor(fgColor, bgColor);
-  tft.setTextSize(2);
-  tft.setCursor(10, 10); 
-  tft.print("HI "); 
-  tft.print(highScore);
-  tft.setCursor(250, 10); 
-  tft.print((int)score);
-  tft.setTextSize(1);
+  drawDinoFrame();
+  delay(16);
 }
