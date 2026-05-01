@@ -1,7 +1,10 @@
 /*
  * =====================================================================
- *  DINO RUN  —  ILI9341 (TFT_eSPI) Version - 3X JUMP HEIGHT
- *  Fixed: Dino jumps 3x higher (123px instead of 41px)
+ *  DINO RUN  —  ILI9341 (TFT_eSPI) Version - BIGGER CACTUS
+ *  Features: 3x jump height, faster speed, bigger cactus!
+ *  Added: Play/Pause with START button, Fixed High Score
+ *  FIXED: High score properly saves/updates
+ *  FIXED: Pause shows red text overlay on game
  * =====================================================================
  */
 #include <TFT_eSPI.h>
@@ -25,7 +28,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define SCR_H  240
 #define GROUND_Y   210
 
-// ============= BITMAPS =============
+// ============= BITMAPS (Original sizes kept) =============
 const unsigned char dino_run1[] PROGMEM = {
   0x00,0x00,0x07,0xf0,0x0f,0xf8,0x0f,0xf8,0x0f,0xf8,0x0f,0x80,0x0f,0xf8,0x0e,0x00,
   0x0f,0xe0,0x0f,0xe0,0x9f,0xe0,0xdf,0xe0,0xff,0xe0,0xff,0xe0,0xff,0xc0,0xff,0x80,
@@ -66,8 +69,9 @@ const unsigned char cloud_big[] PROGMEM = {
   0x1f,0xff,0xe0, 0x00,0x00,0x00
 };
 
-// ============= SCALE FACTOR =============
-#define SC 2
+// ============= SCALE FACTORS =============
+#define DINO_SCALE 2
+#define CACTUS_SCALE 3
 
 // Original bitmap sizes
 #define DINO_W   16
@@ -82,8 +86,15 @@ const unsigned char cloud_big[] PROGMEM = {
 #define CLOUD_H  10
 
 // Scaled sizes
-#define DINO_SW  (DINO_W*SC)
-#define DINO_SH  (DINO_H*SC)
+#define DINO_SW  (DINO_W * DINO_SCALE)
+#define DINO_SH  (DINO_H * DINO_SCALE)
+
+#define CACTUS_SMALL_W  (CS_W * CACTUS_SCALE)
+#define CACTUS_SMALL_H  (CS_H * CACTUS_SCALE)
+#define CACTUS_LARGE_W  (CL_W * CACTUS_SCALE)
+#define CACTUS_LARGE_H  (CL_H * CACTUS_SCALE)
+#define CACTUS_DOUBLE_W (CD_W * CACTUS_SCALE)
+#define CACTUS_DOUBLE_H (CD_H * CACTUS_SCALE)
 
 #define DINO_X   40
 
@@ -101,12 +112,13 @@ const unsigned char cloud_big[] PROGMEM = {
 // ============= GAME VARIABLES =============
 int   dinoY, prevDinoY;
 float jumpVel;
-const float GRAVITY = 1.35;        // Same gravity
+const float GRAVITY = 1.35;
 float cactusX, prevCactusX;
 float gameSpeed;
 float score;
 int   highScore = 0;
 bool  isJumping, playing;
+bool  isPaused = false;
 int   cactusType;
 
 bool     isNightMode;
@@ -130,12 +142,23 @@ unsigned long lastFrameTime = 0;
 unsigned long lastJumpTime = 0;
 const unsigned long JUMP_DEBOUNCE = 80;
 
-#define EEPROM_ADDR 20
+// Save game state for pause
+float savedGameSpeed;
+float savedCactusX;
+float savedScore;
+float savedCloud1X, savedCloud2X;
+float savedDotX[NUM_DOTS];
+float savedBumpX[3];
+int   savedCactusType;
+
+// EEPROM addresses
+#define EEPROM_ADDR_HIGH 0
+#define EEPROM_MAGIC_BYTE 2  // New: Magic byte to check if EEPROM is initialized
 
 // ============= HELPER FUNCTIONS =============
 void drawBitmapScaled(int x, int y, const uint8_t* bmp,
                       int bmpW, int bmpH, uint16_t color, uint16_t bg,
-                      bool transparent = true)
+                      int scale, bool transparent = true)
 {
   int bytesPerRow = (bmpW + 7) / 8;
   for (int row = 0; row < bmpH; row++) {
@@ -144,19 +167,57 @@ void drawBitmapScaled(int x, int y, const uint8_t* bmp,
       uint8_t b = pgm_read_byte(&bmp[byteIndex]);
       bool set = (b >> (7 - (col % 8))) & 1;
       if (set) {
-        tft.fillRect(x + col * SC, y + row * SC, SC, SC, color);
+        tft.fillRect(x + col * scale, y + row * scale, scale, scale, color);
       } else if (!transparent) {
-        tft.fillRect(x + col * SC, y + row * SC, SC, SC, bg);
+        tft.fillRect(x + col * scale, y + row * scale, scale, scale, bg);
       }
     }
   }
 }
 
-int cactusDrawY(int origH) { return GROUND_Y - origH * SC; }
+void drawDino(int x, int y, const uint8_t* bmp, uint16_t color, uint16_t bg) {
+  drawBitmapScaled(x, y, bmp, DINO_W, DINO_H, color, bg, DINO_SCALE);
+}
+
+void drawCactus(int x, int y, const uint8_t* bmp, int w, int h, uint16_t color, uint16_t bg) {
+  drawBitmapScaled(x, y, bmp, w, h, color, bg, CACTUS_SCALE);
+}
+
+void drawCloud(int x, int y, uint16_t color, uint16_t bg) {
+  drawBitmapScaled(x, y, cloud_big, CLOUD_W, CLOUD_H, color, bg, DINO_SCALE);
+}
+
+int cactusDrawY(int origH, int scale) { 
+  return GROUND_Y - (origH * scale); 
+}
 
 void drawBigBump(int x, uint16_t color) {
   tft.fillRect(x,     GROUND_Y - 4,  16, 2, color);
   tft.fillRect(x - 2, GROUND_Y - 2,  20, 2, color);
+}
+
+void showPauseOverlay() {
+  // Draw transparent red overlay with PAUSE text
+  tft.fillRect(0, 80, SCR_W, 50, COL_RED);
+  tft.setTextColor(COL_WHITE);
+  tft.setTextSize(3);
+  tft.setCursor(110, 92);
+  tft.print("PAUSED");
+  tft.setTextSize(1);
+  tft.setCursor(100, 115);
+  tft.print("Press START to Resume");
+}
+
+void erasePauseOverlay() {
+  // Restore the game area that was covered by pause overlay
+  tft.fillRect(0, 80, SCR_W, 50, bgColor);
+  // Redraw the score area that might have been affected
+  tft.setTextSize(2);
+  tft.setTextColor(fgColor);
+  tft.setCursor(10, 5);
+  tft.print("HI:"); tft.print(highScore);
+  tft.setCursor(240, 5);
+  tft.print((int)score);
 }
 
 void eraseDino() {
@@ -164,12 +225,15 @@ void eraseDino() {
 }
 
 void eraseCactus() {
-  tft.fillRect((int)prevCactusX, GROUND_Y - CD_H * SC, CD_W * SC + 4, CD_H * SC + 2, bgColor);
+  tft.fillRect((int)prevCactusX, GROUND_Y - CACTUS_LARGE_H, 
+               CACTUS_DOUBLE_W + 10, CACTUS_LARGE_H + 5, bgColor);
 }
 
 void eraseClouds() {
-  tft.fillRect((int)prevCloud1X, (int)cloud1Y, CLOUD_W * SC, CLOUD_H * SC, bgColor);
-  tft.fillRect((int)prevCloud2X, (int)cloud2Y, CLOUD_W * SC, CLOUD_H * SC, bgColor);
+  tft.fillRect((int)prevCloud1X, (int)cloud1Y, CLOUD_W * DINO_SCALE, 
+               CLOUD_H * DINO_SCALE, bgColor);
+  tft.fillRect((int)prevCloud2X, (int)cloud2Y, CLOUD_W * DINO_SCALE, 
+               CLOUD_H * DINO_SCALE, bgColor);
 }
 
 void eraseBumps() {
@@ -182,6 +246,42 @@ void eraseDots() {
     tft.fillRect(prevDotX[i], dotY[i], 2, 2, bgColor);
 }
 
+void saveGameState() {
+  savedGameSpeed = gameSpeed;
+  savedCactusX = cactusX;
+  savedScore = score;
+  savedCloud1X = cloud1X;
+  savedCloud2X = cloud2X;
+  savedCactusType = cactusType;
+  
+  for (int i = 0; i < NUM_DOTS; i++) {
+    savedDotX[i] = dotX[i];
+  }
+  
+  for (int i = 0; i < 3; i++) {
+    savedBumpX[i] = bumpX[i];
+  }
+}
+
+void restoreGameState() {
+  gameSpeed = savedGameSpeed;
+  cactusX = savedCactusX;
+  score = savedScore;
+  cloud1X = savedCloud1X;
+  cloud2X = savedCloud2X;
+  cactusType = savedCactusType;
+  
+  for (int i = 0; i < NUM_DOTS; i++) {
+    dotX[i] = savedDotX[i];
+    prevDotX[i] = (int)savedDotX[i];
+  }
+  
+  for (int i = 0; i < 3; i++) {
+    bumpX[i] = savedBumpX[i];
+    prevBumpX[i] = (int)savedBumpX[i];
+  }
+}
+
 void showDinoMenu() {
   bgColor = COL_WHITE; fgColor = COL_BLACK;
   tft.fillScreen(bgColor);
@@ -191,16 +291,12 @@ void showDinoMenu() {
   tft.setCursor(60, 60);
   tft.print("DINO RUN");
 
-  drawBitmapScaled(140, 110, dino_run1, DINO_W, DINO_H, COL_BLACK, bgColor);
+  drawDino(140, 110, dino_run1, COL_BLACK, bgColor);
 
   tft.setTextSize(2);
   tft.setTextColor(0x07FF);
-  tft.setCursor(50, 155);
-  tft.print("SELECT : Jump/Start");
-  tft.setTextSize(1);
-  tft.setTextColor(COL_GREY);
-  tft.setCursor(95, 180);
-  tft.print("B : Back to Menu");
+  tft.setCursor(60, 155);
+  tft.print("SELECT: Jump/Start");
 
   tft.setTextSize(2);
   tft.setTextColor(COL_BLACK);
@@ -210,6 +306,7 @@ void showDinoMenu() {
 
 void startDinoGame() {
   playing      = true;
+  isPaused     = false;
   score        = 0;
   lastModeScore= 0;
   isNightMode  = false;
@@ -243,15 +340,49 @@ void startDinoGame() {
   tft.drawFastHLine(0, GROUND_Y, SCR_W, fgColor);
 }
 
+void saveHighScore() {
+  // Use magic byte to ensure EEPROM is properly initialized
+  EEPROM.write(EEPROM_MAGIC_BYTE, 0xAA);  // Magic byte to mark valid data
+  EEPROM.write(EEPROM_ADDR_HIGH, highScore & 0xFF);
+  EEPROM.write(EEPROM_ADDR_HIGH + 1, (highScore >> 8) & 0xFF);
+  EEPROM.commit();
+}
+
+void loadHighScore() {
+  // Check magic byte first
+  uint8_t magic = EEPROM.read(EEPROM_MAGIC_BYTE);
+  
+  if (magic == 0xAA) {
+    // Valid data exists
+    int lo = EEPROM.read(EEPROM_ADDR_HIGH);
+    int hi = EEPROM.read(EEPROM_ADDR_HIGH + 1);
+    highScore = lo | (hi << 8);
+    
+    // Sanity check - if highScore is unrealistic, reset to 0
+    if (highScore > 9999 || highScore < 0) {
+      highScore = 0;
+      saveHighScore();  // Save the reset value
+    }
+  } else {
+    // First run or corrupted EEPROM - initialize with 0
+    highScore = 0;
+    saveHighScore();  // Write initial values
+  }
+}
+
 void dinoGameOver() {
   playing = false;
-  if ((int)score > highScore) {
-    highScore = (int)score;
-    EEPROM.write(EEPROM_ADDR, highScore & 0xFF);
-    EEPROM.write(EEPROM_ADDR + 1, (highScore >> 8) & 0xFF);
-    EEPROM.commit();
+  isPaused = false;
+  
+  int currentScore = (int)score;
+  
+  // Update high score if current score is higher
+  if (currentScore > highScore) {
+    highScore = currentScore;
+    saveHighScore();  // Save immediately
   }
 
+  // Game over animation
   for (int i = 0; i < 3; i++) {
     tft.fillScreen(COL_RED); delay(60);
     tft.fillScreen(bgColor); delay(60);
@@ -271,14 +402,14 @@ void dinoGameOver() {
   tft.setTextSize(2);
   tft.setTextColor(COL_BLACK);
   tft.setCursor(90, 126);
-  tft.print("Score: "); tft.print((int)score);
+  tft.print("Score: "); tft.print(currentScore);
   tft.setCursor(90, 148);
   tft.print("Best:  "); tft.print(highScore);
 
-  tft.setTextSize(1);
+  tft.setTextSize(2);
   tft.setTextColor(0x07FF);
-  tft.setCursor(80, 174);
-  tft.print("SELECT: Play Again   B: Menu");
+  tft.setCursor(60, 174);
+  tft.print("SELECT: Play Again");
 }
 
 void drawDinoFrame() {
@@ -303,20 +434,23 @@ void drawDinoFrame() {
       drawBigBump(bx, fgColor);
   }
 
-  drawBitmapScaled((int)cloud1X, (int)cloud1Y, cloud_big, CLOUD_W, CLOUD_H, fgColor, bgColor);
-  drawBitmapScaled((int)cloud2X, (int)cloud2Y, cloud_big, CLOUD_W, CLOUD_H, fgColor, bgColor);
+  drawCloud((int)cloud1X, (int)cloud1Y, fgColor, bgColor);
+  drawCloud((int)cloud2X, (int)cloud2Y, fgColor, bgColor);
 
   const uint8_t* dinoFrame_bmp = (dinoFrame == 0) ? dino_run1 : dino_run2;
-  drawBitmapScaled(DINO_X, dinoY, dinoFrame_bmp, DINO_W, DINO_H, fgColor, bgColor);
+  drawDino(DINO_X, dinoY, dinoFrame_bmp, fgColor, bgColor);
 
-  if (cactusX < SCR_W + 10 && cactusX > -CD_W * SC) {
+  if (cactusX < SCR_W + 50 && cactusX > -CACTUS_DOUBLE_W) {
     int cx = (int)cactusX;
-    if (cactusType == 0)
-      drawBitmapScaled(cx, cactusDrawY(CS_H), cactus_small, CS_W, CS_H, fgColor, bgColor);
-    else if (cactusType == 1)
-      drawBitmapScaled(cx, cactusDrawY(CL_H), cactus_large, CL_W, CL_H, fgColor, bgColor);
-    else
-      drawBitmapScaled(cx, cactusDrawY(CD_H), cactus_double, CD_W, CD_H, fgColor, bgColor);
+    if (cactusType == 0) {
+      drawCactus(cx, cactusDrawY(CS_H, CACTUS_SCALE), cactus_small, CS_W, CS_H, fgColor, bgColor);
+    }
+    else if (cactusType == 1) {
+      drawCactus(cx, cactusDrawY(CL_H, CACTUS_SCALE), cactus_large, CL_W, CL_H, fgColor, bgColor);
+    }
+    else {
+      drawCactus(cx, cactusDrawY(CD_H, CACTUS_SCALE), cactus_double, CD_W, CD_H, fgColor, bgColor);
+    }
   }
 
   tft.setTextSize(2);
@@ -350,9 +484,9 @@ void setup() {
   pinMode(BTN_SELECT,INPUT_PULLUP);
 
   EEPROM.begin(512);
-  int lo = EEPROM.read(EEPROM_ADDR);
-  int hi = EEPROM.read(EEPROM_ADDR + 1);
-  if (lo != 255 || hi != 255) highScore = lo | (hi << 8);
+  
+  // Load high score with magic byte check
+  loadHighScore();
 
   tft.init();
   tft.setRotation(1);
@@ -361,39 +495,61 @@ void setup() {
   randomSeed(analogRead(34));
 
   playing = false;
+  isPaused = false;
   showDinoMenu();
 }
 
 void loop() {
-  static unsigned long lastBPress = 0;
-  if (digitalRead(BTN_B) == LOW && millis() - lastBPress > 300) {
-    lastBPress = millis();
-    if (!playing) {
-      showDinoMenu();
-      return;
+  static unsigned long lastStartPress = 0;
+  static unsigned long lastSelectPress = 0;
+  static unsigned long pauseOverlayTime = 0;
+  static bool pauseOverlayShown = false;
+  
+  // Handle START button (Pause/Resume)
+  if (playing && digitalRead(BTN_START) == LOW && millis() - lastStartPress > 300) {
+    lastStartPress = millis();
+    
+    if (!isPaused) {
+      // Pause the game
+      isPaused = true;
+      saveGameState();
+      showPauseOverlay();  // Show overlay on top of game
+      pauseOverlayShown = true;
+    } else {
+      // Resume the game
+      isPaused = false;
+      erasePauseOverlay();  // Remove the overlay
+      pauseOverlayShown = false;
+      restoreGameState();
+      // Force redraw of the game area
+      drawDinoFrame();
     }
-    playing = false;
-    showDinoMenu();
+    delay(100);
     return;
   }
 
+  // If paused, just wait (don't update game logic)
+  if (isPaused) {
+    delay(50);
+    return;
+  }
+
+  // Handle menu and game start
   if (!playing) {
-    static unsigned long lastSelPress = 0;
-    if (digitalRead(BTN_SELECT) == LOW && millis() - lastSelPress > 300) {
-      lastSelPress = millis();
+    if (digitalRead(BTN_SELECT) == LOW && millis() - lastSelectPress > 300) {
+      lastSelectPress = millis();
       startDinoGame();
     }
     return;
   }
 
-  // ============= JUMP WITH 3X HIGHER HEIGHT =============
+  // Jump with 3X higher height
   static unsigned long lastSel = 0;
   if ((digitalRead(BTN_SELECT) == LOW || digitalRead(BTN_A) == LOW) && 
-      !isJumping && millis() - lastSel > JUMP_DEBOUNCE) {
+      !isJumping && millis() - lastSel > JUMP_DEBOUNCE && !isPaused) {
     lastSel   = millis();
     isJumping = true;
-    jumpVel   = -18.2;     // 3X HIGHER JUMP! (was -10.5, now -18.2)
-                          // Results in 123px jump height instead of 41px
+    jumpVel   = -18.2;
   }
 
   prevDinoY = dinoY;
@@ -401,8 +557,7 @@ void loop() {
     jumpVel += GRAVITY;
     dinoY   += (int)jumpVel;
     
-    // Optional: Add ceiling to prevent jumping off screen
-    if (dinoY < 20) {  // Prevent going above screen top
+    if (dinoY < 20) {
       dinoY = 20;
       jumpVel = 0;
       isJumping = false;
@@ -422,16 +577,16 @@ void loop() {
   if (gameSpeed > 22.0) gameSpeed = 22.0;
   score      += 0.45;
 
-  if (cactusX < -CD_W * SC - 10) {
-    int positions[] = {SCR_W, SCR_W + 30, SCR_W + 60, SCR_W + 100, SCR_W + 150, SCR_W + 200};
+  if (cactusX < -CACTUS_DOUBLE_W - 20) {
+    int positions[] = {SCR_W, SCR_W + 50, SCR_W + 100, SCR_W + 150, SCR_W + 200, SCR_W + 250};
     cactusX    = positions[random(0, 6)];
     cactusType = random(0, 3);
   }
 
   prevCloud1X = cloud1X; prevCloud2X = cloud2X;
   cloud1X -= 1.5; cloud2X -= 1.0;
-  if (cloud1X < -CLOUD_W * SC) { cloud1X = SCR_W; cloud1Y = random(25, 70); }
-  if (cloud2X < -CLOUD_W * SC) { cloud2X = SCR_W; cloud2Y = random(25, 70); }
+  if (cloud1X < -CLOUD_W * DINO_SCALE) { cloud1X = SCR_W; cloud1Y = random(25, 70); }
+  if (cloud2X < -CLOUD_W * DINO_SCALE) { cloud2X = SCR_W; cloud2Y = random(25, 70); }
 
   for (int i = 0; i < NUM_DOTS; i++) {
     prevDotX[i] = (int)dotX[i];
@@ -463,24 +618,23 @@ void loop() {
 
   // Collision detection
   int cW, cH;
-  if      (cactusType == 0) { cW = CS_W * SC; cH = CS_H * SC; }
-  else if (cactusType == 1) { cW = CL_W * SC; cH = CL_H * SC; }
-  else                      { cW = CD_W * SC; cH = CD_H * SC; }
+  if      (cactusType == 0) { cW = CACTUS_SMALL_W; cH = CACTUS_SMALL_H; }
+  else if (cactusType == 1) { cW = CACTUS_LARGE_W; cH = CACTUS_LARGE_H; }
+  else                      { cW = CACTUS_DOUBLE_W; cH = CACTUS_DOUBLE_H; }
 
   int cactusTop = GROUND_Y - cH;
   int dinoLeft  = DINO_X + 4;
   int dinoRight = DINO_X + DINO_SW - 4;
   int dinoBottom= dinoY  + DINO_SH - 2;
 
-  int cactLeft  = (int)cactusX + 2;
-  int cactRight = (int)cactusX + cW - 2;
+  int cactLeft  = (int)cactusX + 4;
+  int cactRight = (int)cactusX + cW - 4;
 
   if (cactRight > dinoLeft && cactLeft < dinoRight) {
     if (dinoBottom > cactusTop) {
       dinoGameOver();
-      while (digitalRead(BTN_SELECT) == HIGH && digitalRead(BTN_B) == HIGH) delay(10);
+      while (digitalRead(BTN_SELECT) == HIGH) delay(10);
       delay(200);
-      if (digitalRead(BTN_B) == LOW) { showDinoMenu(); return; }
       startDinoGame();
       return;
     }
