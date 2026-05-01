@@ -13,6 +13,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define MAX_FALL_RATE 15     // Maximum falling speed
 #define FLY_FORCE -6         // Reduced fly force (was -8)
 #define GRAVITY 1            // Gravity constant
+#define GROUND_Y 220         // Ground Y position (was 230, adjusted)
 
 // EEPROM address for highscore
 #define addr 0
@@ -22,6 +23,7 @@ int currentpage;
 int currentWing;
 int flX, flY, fallRate;
 int pillarPos, gapPosition;
+int gapHeight;  // Variable for gap height
 int score;
 int highScore = 0;
 bool running = false;
@@ -32,8 +34,8 @@ unsigned long lastDebounceTime = 0;
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 50;
 const unsigned long gameOverDelay = 500;
-unsigned long lastFlyTime = 0;     // To prevent multiple fly inputs
-const unsigned long flyCooldown = 150; // Cooldown between fly actions
+unsigned long lastFlyTime = 0;
+const unsigned long flyCooldown = 150;
 
 long nextDrawLoopRunTime;
 
@@ -53,8 +55,8 @@ void drawHome();
 void startGame();
 void drawLoop();
 void checkCollision();
-void drawPillar(int x, int gap);
-void clearPillar(int x, int gap);
+void drawPillar(int x, int gap, int gapH);
+void clearPillar(int x, int gap, int gapH);
 void drawFlappy(int x, int y);
 void clearFlappy(int x, int y);
 void drawWing1(int x, int y);
@@ -64,24 +66,21 @@ void resetScore();
 void setupButtons();
 bool readStartButton();
 bool readSelectButton();
+int getRandomGapHeight();
 
 /*______Setup Function_______*/
 void setup() {
   Serial.begin(9600);
   
-  // Initialize display
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(BLACK);
   
-  // Setup buttons
   setupButtons();
   
-  // Initialize EEPROM
   EEPROM.begin(512);
   highScore = EEPROM.read(addr);
   
-  // Show loading screen
   tft.setTextSize(3);
   tft.setTextColor(WHITE);
   tft.setCursor(50, 10);
@@ -97,7 +96,6 @@ void setup() {
   tft.setTextColor(GREEN);
   tft.print("Loading...");
   
-  // Loading bar
   for (int i = 0; i < 320; i++) {
     tft.fillRect(0, 210, i, 10, RED);
     delay(2);
@@ -114,9 +112,9 @@ void setupButtons() {
   pinMode(BTN_SELECT, INPUT_PULLUP);
 }
 
-/*______Read Buttons with Debouncing_______*/
+/*______Read Buttons_______*/
 bool readStartButton() {
-  if (digitalRead(BTN_START) == LOW) {
+  if (digitalRead(BTN_SELECT) == LOW) {
     if (millis() - lastDebounceTime > debounceDelay) {
       lastDebounceTime = millis();
       return true;
@@ -126,7 +124,7 @@ bool readStartButton() {
 }
 
 bool readSelectButton() {
-  if (digitalRead(BTN_SELECT) == LOW) {
+  if (digitalRead(BTN_START) == LOW) {
     if (millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
       return true;
@@ -135,12 +133,18 @@ bool readSelectButton() {
   return false;
 }
 
+/*______Get Random Gap Height (65-90 in steps of 5)_______*/
+int getRandomGapHeight() {
+  int gaps[] = {65, 70, 75, 80, 85, 90};
+  int index = random(0, 6);
+  return gaps[index];
+}
+
 /*______Draw Home Screen_______*/
 void drawHome() {
   tft.fillScreen(BLACK);
   tft.drawRoundRect(0, 0, 319, 240, 8, WHITE);
   
-  // Start button area
   tft.fillRoundRect(60, 180, 200, 40, 8, RED);
   tft.drawRoundRect(60, 180, 200, 40, 8, WHITE);
   
@@ -159,7 +163,6 @@ void drawHome() {
   tft.setTextColor(WHITE);
   tft.print("START");
   
-  // Instructions
   tft.setTextSize(1);
   tft.setCursor(50, 230);
   tft.setTextColor(YELLOW);
@@ -169,67 +172,65 @@ void drawHome() {
 /*______Start Game_______*/
 void startGame() {
   flX = 50;
-  flY = 60;  // Changed from 25 to a safer starting position
+  flY = 100;  // Middle position for better gameplay
   fallRate = 0;
-  pillarPos = 200;
-  gapPosition = 60;
+  pillarPos = 250;
+  gapPosition = 40 + random(0, 80);  // Random top pillar height
+  gapHeight = getRandomGapHeight();
   crashed = false;
   running = false;
   score = 0;
   currentWing = 0;
   currentpcolour = GREEN;
   highScore = EEPROM.read(addr);
+  randomSeed(millis());
   
   tft.fillScreen(BLUE);
   
-  tft.setTextColor(YELLOW);
-
-  
-  // Draw Ground
-  int ty = 230;
-  for (int tx = 0; tx <= 300; tx += 20) {
+  // Draw Ground with grass effect
+  int ty = GROUND_Y;
+  for (int tx = 0; tx <= 320; tx += 20) {
     tft.fillTriangle(tx, ty, tx + 10, ty, tx, ty + 10, GREEN);
     tft.fillTriangle(tx + 10, ty + 10, tx + 10, ty, tx, ty + 10, YELLOW);
     tft.fillTriangle(tx + 10, ty, tx + 20, ty, tx + 10, ty + 10, YELLOW);
     tft.fillTriangle(tx + 20, ty + 10, tx + 20, ty, tx + 10, ty + 10, GREEN);
   }
   
+  // Draw ground base
+  tft.fillRect(0, GROUND_Y + 8, 320, 12, GREEN);
+  
   nextDrawLoopRunTime = millis() + DRAW_LOOP_INTERVAL;
-  lastFlyTime = 0; // Reset fly cooldown
+  lastFlyTime = 0;
 }
 
 /*______Draw Loop_______*/
 void drawLoop() {
-  // Clear moving items
-  clearPillar(pillarPos, gapPosition);
+  clearPillar(pillarPos, gapPosition, gapHeight);
   clearFlappy(flX, flY);
   
-  // Move items
   if (running) {
-    // Apply gravity with maximum limit
     fallRate += GRAVITY;
     if (fallRate > MAX_FALL_RATE) {
       fallRate = MAX_FALL_RATE;
     }
     flY += fallRate;
     
-    // Boundary check to prevent going above screen
     if (flY < 0) {
       flY = 0;
       fallRate = 0;
     }
     
     pillarPos -= 5;
-    if (pillarPos == 0) {
+    if (pillarPos <= 0 && pillarPos > -5) {
       score = score + 5;
     } else if (pillarPos < -50) {
-      pillarPos = 160 + (random(0, 6) * 10);;
-        gapPosition = 20 + (random(0, 10) * 10);  // 20 + (0-9)*10 = 20,30,40,...,110
+      pillarPos = 250+random(0,7)* 10;  // Start from right edge
+      gapPosition = 20 + random(0, 90);  // Top pillar height 20-110
+      gapHeight = getRandomGapHeight();  // Random gap between pillars
     }
   }
   
-  // Draw moving items
-  drawPillar(pillarPos, gapPosition);
+  drawPillar(pillarPos, gapPosition, gapHeight);
   drawFlappy(flX, flY);
   
   // Animate wings
@@ -239,7 +240,6 @@ void drawLoop() {
     case 4: case 5: drawWing3(flX, flY); break;
   }
   
-  // Change pillar color for high score
   if (score == highScore && score > 0) {
     currentpcolour = YELLOW;
   } else {
@@ -249,31 +249,30 @@ void drawLoop() {
   currentWing++;
   if (currentWing == 6) currentWing = 0;
   
-  // Display score during game
-  tft.fillRect(240, 5, 60, 30, BLUE);
+  tft.fillRect(240, 5, 70, 30, BLUE);
   tft.setTextColor(WHITE);
   tft.setTextSize(2);
   tft.setCursor(245, 10);
   tft.print("S:");
-  tft.setCursor(266, 10);
+  tft.setCursor(265, 10);
   tft.print(score);
 }
 
 /*______Check Collisions_______*/
 void checkCollision() {
-  // Collision with top of screen
   if (flY <= 0) {
     crashed = true;
   }
   
-  // Collision with ground (reduced from 206 to 200 for better collision)
-  if (flY > 200) {
+  // Ground collision - bird hits ground
+  if (flY + 24 >= GROUND_Y) {
     crashed = true;
   }
   
-  // Collision with pillar
+  // Pillar collision
   if (flX + 34 > pillarPos && flX < pillarPos + 50) {
-    if (flY < gapPosition || flY + 24 > gapPosition + 65 + (random(0, 8) * 5)) {
+    // Check if bird is above top pillar OR below bottom pillar
+    if (flY < gapPosition || flY + 24 > gapPosition + gapHeight) {
       crashed = true;
     }
   }
@@ -309,20 +308,38 @@ void checkCollision() {
   }
 }
 
-/*______Draw Pillars_______*/
-void drawPillar(int x, int gap) {
-  tft.fillRect(x + 2, 2, 46, gap - 4, currentpcolour);
-  tft.fillRect(x + 2, gap + 92, 46, 136 - gap, currentpcolour);
+/*______Draw Pillars with Proper Ground Connection_______*/
+void drawPillar(int x, int gap, int gapH) {
+  // Top pillar - from top to gap position
+  if (gap > 0) {
+    tft.fillRect(x + 2, 2, 46, gap - 4, currentpcolour);
+    tft.drawRect(x, 0, 50, gap, BLACK);
+    tft.drawRect(x + 1, 1, 48, gap - 2, BLACK);
+  }
   
-  tft.drawRect(x, 0, 50, gap, BLACK);
-  tft.drawRect(x + 1, 1, 48, gap - 2, BLACK);
-  tft.drawRect(x, gap + 90, 50, 140 - gap, BLACK);
-  tft.drawRect(x + 1, gap + 91, 48, 138 - gap, BLACK);
+  // Bottom pillar - from (gap + gapH) to GROUND_Y
+  int bottomPillarStart = gap + gapH;
+  int bottomPillarHeight = GROUND_Y - bottomPillarStart;
+  
+  if (bottomPillarHeight > 0) {
+    tft.fillRect(x + 2, bottomPillarStart + 2, 46, bottomPillarHeight - 4, currentpcolour);
+    tft.drawRect(x, bottomPillarStart, 50, bottomPillarHeight, BLACK);
+    tft.drawRect(x + 1, bottomPillarStart + 1, 48, bottomPillarHeight - 2, BLACK);
+  }
 }
 
-void clearPillar(int x, int gap) {
-  tft.fillRect(x + 45, 0, 5, gap, BLUE);
-  tft.fillRect(x + 45, gap + 90, 5, 140 - gap, BLUE);
+void clearPillar(int x, int gap, int gapH) {
+  // Clear top pillar area
+  if (gap > 0) {
+    tft.fillRect(x + 45, 0, 5, gap, BLUE);
+  }
+  
+  // Clear bottom pillar area
+  int bottomPillarStart = gap + gapH;
+  int bottomPillarHeight = GROUND_Y - bottomPillarStart;
+  if (bottomPillarHeight > 0) {
+    tft.fillRect(x + 45, bottomPillarStart, 5, bottomPillarHeight, BLUE);
+  }
 }
 
 /*______Draw Bird_______*/
@@ -425,7 +442,6 @@ void resetScore() {
 
 /*______Main Loop_______*/
 void loop() {
-  // Check SELECT button for reset
   if (readSelectButton()) {
     if (currentpage == 1) {
       if (!running && crashed) {
@@ -434,30 +450,24 @@ void loop() {
     }
   }
   
-  // Check START button for game control
   if (readStartButton()) {
     if (currentpage == 0) {
-      // Start game from home screen
       currentpage = 1;
       startGame();
     } else if (currentpage == 1) {
       if (crashed) {
-        // Restart game
         startGame();
       } else if (!running) {
-        // Start flying
         running = true;
-        fallRate = FLY_FORCE;  // Use reduced fly force
+        fallRate = FLY_FORCE;
         lastFlyTime = millis();
       } else if (running && (millis() - lastFlyTime > flyCooldown)) {
-        // Make bird fly up with cooldown to prevent multiple rapid inputs
         fallRate = FLY_FORCE;
         lastFlyTime = millis();
       }
     }
   }
   
-  // Game logic for page 1 (Flappy Bird)
   if (currentpage == 1) {
     if (millis() > nextDrawLoopRunTime && !crashed) {
       drawLoop();
@@ -468,4 +478,4 @@ void loop() {
   }
   
   delay(5);
-} 
+}
