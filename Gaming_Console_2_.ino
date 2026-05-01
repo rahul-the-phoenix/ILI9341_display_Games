@@ -19,6 +19,7 @@ enum GameMode {
   GAME_MENU,
   GAME_SNAKE,
   GAME_FLAPPY,
+  GAME_FLAPPY_SUBMENU,   // NEW: submenu for flappy versions
   GAME_CONNECT4,
   GAME_TICTACTOE,
   GAME_RPS,
@@ -34,15 +35,18 @@ int selectedGame     = 0;   // 0..8
 int screenWidth  = 320;
 int screenHeight = 240;
 
+// ============= FLAPPY SUBMENU =============
+// 0 = Flappy Bird Day 1, 1 = Flappy Bird Night 1, 2 = Flappy Bird Night 2
+int flappySubSelected = 0;
+int flappyVersion     = 0;  // which version is actually running
+
 // ============= MENU DESIGN CONSTANTS =============
-// PAGE-BASED MENU: shows 6 items per page (3 left, 3 right grid layout)
 #define MENU_BG        0x0000
 #define MENU_HEADER_H  38
-#define MENU_ITEMS     9          // total games
-#define MENU_PER_PAGE  6          // 6 items per page (3x2 grid)
-#define MENU_COLS      3          // 3 columns
-#define MENU_ROWS      2          // 2 rows per page
-// Each card
+#define MENU_ITEMS     9
+#define MENU_PER_PAGE  6
+#define MENU_COLS      3
+#define MENU_ROWS      2
 #define CARD_W         98
 #define CARD_H         86
 #define CARD_GAP_X     4
@@ -50,58 +54,23 @@ int screenHeight = 240;
 #define CARD_START_X   4
 #define CARD_START_Y   (MENU_HEADER_H + 4)
 
-int menuPage = 0;   // current page (0 or 1)
+int menuPage = 0;
 
 const uint16_t GAME_ACCENT[9] = {
-  0x07E0,  // Snake      – Green
-  0xFFE0,  // Flappy     – Yellow
-  0xF81F,  // Connect4   – Magenta
-  0x837F,  // TicTacToe  – Lavender
-  0xFC00,  // RPS        – Orange
-  0x07FF,  // Ninja Up   – Cyan
-  0xF800,  // Pong       – Red
-  0xFB9A,  // SpermRace  – Pink
-  0x02DF   // CarRacing  – Teal
+  0x07E0, 0xFFE0, 0xF81F, 0x837F, 0xFC00, 0x07FF, 0xF800, 0xFB9A, 0x02DF
 };
-
 const uint16_t GAME_DIM[9] = {
-  0x0140,  // dim green
-  0x2200,  // dim yellow
-  0x2006,  // dim magenta
-  0x1012,  // dim lavender
-  0x2100,  // dim orange
-  0x020A,  // dim cyan
-  0x2000,  // dim red
-  0x300A,  // dim pink
-  0x0109   // dim teal
+  0x0140, 0x2200, 0x2006, 0x1012, 0x2100, 0x020A, 0x2000, 0x300A, 0x0109
 };
-
 const char* GAME_NAMES[9] = {
-  "SNAKE",
-  "FLAPPY",
-  "CONNECT 4",
-  "TIC TAC",
-  "RPS",
-  "NINJA UP",
-  "PONG",
-  "SPERM",
-  "RACING"
+  "SNAKE","FLAPPY","CONNECT 4","TIC TAC","RPS","NINJA UP","PONG","SPERM","RACING"
 };
-
 const char* GAME_SUBTITLES[9] = {
-  "EAT & GROW",
-  "FLY & DODGE",
-  "CONNECT&BLOCK",
-  "THINK&PLACE",
-  "CHOOSE&DUEL",
-  "DODGE RUSH",
-  "RALLY & WIN",
-  "DODGE&SURVIVE",
-  "RACE&DODGE"
+  "EAT & GROW","FLY & DODGE","CONNECT&BLOCK","THINK&PLACE",
+  "CHOOSE&DUEL","DODGE RUSH","RALLY & WIN","DODGE&SURVIVE","RACE&DODGE"
 };
-
 const char* GAME_MODE_BADGE[9] = {
-  "1P", "1P", "BOT", "BOT", "BOT", "1P", "BOT", "1P", "1P"
+  "1P","1P","BOT","BOT","BOT","1P","BOT","1P","1P"
 };
 
 int menuHighScores[9] = {0,0,0,0,0,0,0,0,0};
@@ -111,6 +80,7 @@ void showMenu();
 void returnToMenu();
 void resetSnakeGame();
 void showStartScreenSnake();
+void showFlappySubmenu();
 void showStartScreenFlappy();
 void resetGameC4();
 void resetTTTGame();
@@ -118,6 +88,7 @@ void showStartScreenNinja();
 void showStartScreenPong();
 void showStartScreenSperm();
 void showStartScreenCar();
+void startFlappyVersionGame();
 
 // ================================================================
 // =================== SNAKE VARIABLES ============================
@@ -145,7 +116,7 @@ bool bonusActive = false;
 unsigned long bonusStartTime;
 
 // ================================================================
-// =================== FLAPPY VARIABLES ===========================
+// =================== FLAPPY VARIABLES (shared) ==================
 // ================================================================
 #define MAX_DOTS 30
 struct Dot { float x, y, speed; int brightness; };
@@ -186,6 +157,248 @@ const unsigned char bird_details_bmp[] PROGMEM = {
   0x00,0x00,0x7e,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
 };
+
+// ================================================================
+// =================== STANDALONE FLAPPY (Day / Night 2) ==========
+// ================================================================
+// Variables for the standalone pixel-art flappy versions (Doc 2 & 3 style)
+#define DRAW_LOOP_INTERVAL 50
+#define MAX_FALL_RATE 15
+#define FLY_FORCE -6
+#define FGRAVITY 1
+#define GROUND_Y 220
+
+int  sa_currentWing;
+int  sa_flX, sa_flY, sa_fallRate;
+int  sa_pillarPos, sa_gapPosition, sa_gapHeight;
+int  sa_score;
+int  sa_highScore = 0;
+bool sa_running   = false;
+bool sa_crashed   = false;
+bool sa_paused    = false;
+unsigned long sa_lastDebounce  = 0;
+unsigned long sa_lastPausePress = 0;
+unsigned long sa_lastFlyTime   = 0;
+const unsigned long SA_FLY_COOLDOWN = 150;
+long sa_nextDrawTime;
+int  sa_currentpcolour;
+
+int getRandomGapHeightSA() {
+  int gaps[] = {65, 70, 75, 80, 85, 90};
+  return gaps[random(0, 6)];
+}
+
+// ---------- pixel-art bird drawing (same for both versions) ----------
+void sa_drawFlappy(int x, int y) {
+  tft.fillRect(x+2,  y+8,  2, 10, TFT_BLACK);
+  tft.fillRect(x+4,  y+6,  2, 2,  TFT_BLACK);
+  tft.fillRect(x+6,  y+4,  2, 2,  TFT_BLACK);
+  tft.fillRect(x+8,  y+2,  4, 2,  TFT_BLACK);
+  tft.fillRect(x+12, y,   12, 2,  TFT_BLACK);
+  tft.fillRect(x+24, y+2,  2, 2,  TFT_BLACK);
+  tft.fillRect(x+26, y+4,  2, 2,  TFT_BLACK);
+  tft.fillRect(x+28, y+6,  2, 6,  TFT_BLACK);
+  tft.fillRect(x+10, y+22,10, 2,  TFT_BLACK);
+  tft.fillRect(x+4,  y+18, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+6,  y+20, 4, 2,  TFT_BLACK);
+  tft.fillRect(x+12, y+2,  6, 2,  TFT_YELLOW);
+  tft.fillRect(x+8,  y+4,  8, 2,  TFT_YELLOW);
+  tft.fillRect(x+6,  y+6, 10, 2,  TFT_YELLOW);
+  tft.fillRect(x+4,  y+8, 12, 2,  TFT_YELLOW);
+  tft.fillRect(x+4,  y+10,14, 2,  TFT_YELLOW);
+  tft.fillRect(x+4,  y+12,16, 2,  TFT_YELLOW);
+  tft.fillRect(x+4,  y+14,14, 2,  TFT_YELLOW);
+  tft.fillRect(x+4,  y+16,12, 2,  TFT_YELLOW);
+  tft.fillRect(x+6,  y+18,12, 2,  TFT_YELLOW);
+  tft.fillRect(x+10, y+20,10, 2,  TFT_YELLOW);
+  tft.fillRect(x+18, y+2,  2, 2,  TFT_BLACK);
+  tft.fillRect(x+16, y+4,  2, 6,  TFT_BLACK);
+  tft.fillRect(x+18, y+10, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+18, y+4,  2, 6,  TFT_WHITE);
+  tft.fillRect(x+20, y+2,  4, 10, TFT_WHITE);
+  tft.fillRect(x+24, y+4,  2, 8,  TFT_WHITE);
+  tft.fillRect(x+26, y+6,  2, 6,  TFT_WHITE);
+  tft.fillRect(x+24, y+6,  2, 4,  TFT_BLACK);
+  tft.fillRect(x+20, y+12,12, 2,  TFT_BLACK);
+  tft.fillRect(x+18, y+14, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+20, y+14,12, 2,  TFT_RED);
+  tft.fillRect(x+32, y+14, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+16, y+16, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+18, y+16, 2, 2,  TFT_RED);
+  tft.fillRect(x+20, y+16,12, 2,  TFT_BLACK);
+  tft.fillRect(x+18, y+18, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+20, y+18,10, 2,  TFT_RED);
+  tft.fillRect(x+30, y+18, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+20, y+20,10, 2,  TFT_BLACK);
+}
+void sa_clearFlappy(int x, int y, uint16_t bgCol) {
+  tft.fillRect(x, y, 34, 24, bgCol);
+}
+void sa_drawWing1(int x, int y) {
+  tft.fillRect(x,    y+14, 2, 6,  TFT_BLACK);
+  tft.fillRect(x+2,  y+20, 8, 2,  TFT_BLACK);
+  tft.fillRect(x+2,  y+12,10, 2,  TFT_BLACK);
+  tft.fillRect(x+12, y+14, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+10, y+16, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+2,  y+14, 8, 6,  TFT_WHITE);
+  tft.fillRect(x+8,  y+18, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+10, y+14, 2, 2,  TFT_WHITE);
+}
+void sa_drawWing2(int x, int y) {
+  tft.fillRect(x+2,  y+10,10, 2,  TFT_BLACK);
+  tft.fillRect(x+2,  y+16,10, 2,  TFT_BLACK);
+  tft.fillRect(x,    y+12, 2, 4,  TFT_BLACK);
+  tft.fillRect(x+12, y+12, 2, 4,  TFT_BLACK);
+  tft.fillRect(x+2,  y+12,10, 4,  TFT_WHITE);
+}
+void sa_drawWing3(int x, int y) {
+  tft.fillRect(x+2,  y+6,  8, 2,  TFT_BLACK);
+  tft.fillRect(x,    y+8,  2, 6,  TFT_BLACK);
+  tft.fillRect(x+10, y+8,  2, 2,  TFT_BLACK);
+  tft.fillRect(x+12, y+10, 2, 4,  TFT_BLACK);
+  tft.fillRect(x+10, y+14, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+2,  y+14, 2, 2,  TFT_BLACK);
+  tft.fillRect(x+4,  y+16, 6, 2,  TFT_BLACK);
+  tft.fillRect(x+2,  y+8,  8, 6,  TFT_WHITE);
+  tft.fillRect(x+4,  y+14, 6, 2,  TFT_WHITE);
+  tft.fillRect(x+10, y+10, 2, 4,  TFT_WHITE);
+}
+
+void sa_drawPillar(int x, int gap, int gapH, uint16_t pCol, uint16_t bgCol) {
+  if (gap > 0) {
+    tft.fillRect(x+2, 2, 46, gap-4, pCol);
+    tft.drawRect(x,   0, 50, gap,   TFT_BLACK);
+    tft.drawRect(x+1, 1, 48, gap-2, TFT_BLACK);
+  }
+  int bStart = gap + gapH;
+  int bH     = GROUND_Y - bStart;
+  if (bH > 0) {
+    tft.fillRect(x+2, bStart+2, 46, bH-4, pCol);
+    tft.drawRect(x,   bStart,   50, bH,   TFT_BLACK);
+    tft.drawRect(x+1, bStart+1, 48, bH-2, TFT_BLACK);
+  }
+}
+void sa_clearPillar(int x, int gap, int gapH, uint16_t bgCol) {
+  if (gap > 0)
+    tft.fillRect(x+45, 0, 5, gap, bgCol);
+  int bStart = gap + gapH;
+  int bH     = GROUND_Y - bStart;
+  if (bH > 0)
+    tft.fillRect(x+45, bStart, 5, bH, bgCol);
+}
+
+void sa_drawGround(uint16_t bgCol, uint16_t g1, uint16_t g2) {
+  int ty = GROUND_Y;
+  for (int tx = 0; tx <= 320; tx += 20) {
+    tft.fillTriangle(tx,    ty,    tx+10, ty,    tx,    ty+10, g1);
+    tft.fillTriangle(tx+10, ty+10, tx+10, ty,    tx,    ty+10, g2);
+    tft.fillTriangle(tx+10, ty,    tx+20, ty,    tx+10, ty+10, g2);
+    tft.fillTriangle(tx+20, ty+10, tx+20, ty,    tx+10, ty+10, g1);
+  }
+  tft.fillRect(0, GROUND_Y + 8, 320, 12, TFT_GREEN);
+}
+
+void sa_startGame(int version) {
+  sa_flX       = 50;
+  sa_flY       = 100;
+  sa_fallRate  = 0;
+  sa_pillarPos    = 250;
+  sa_gapPosition  = 40 + random(0, 80);
+  sa_gapHeight    = getRandomGapHeightSA();
+  sa_crashed   = false;
+  sa_running   = false;
+  sa_paused    = false;
+  sa_score     = 0;
+  sa_currentWing = 0;
+  sa_lastFlyTime = 0;
+  randomSeed(millis());
+
+  // version 0 = Day (blue sky), version 2 = Night 2 (black sky)
+  uint16_t bgCol = (version == 0) ? (uint16_t)0x001F : (uint16_t)0x0000;
+  uint16_t g1    = (version == 0) ? (uint16_t)TFT_GREEN  : (uint16_t)TFT_WHITE;
+  uint16_t g2    = (version == 0) ? (uint16_t)TFT_YELLOW : (uint16_t)TFT_BLACK;
+  sa_currentpcolour = (version == 0) ? (int)TFT_GREEN : (int)TFT_WHITE;
+
+  tft.fillScreen(bgCol);
+  sa_drawGround(bgCol, g1, g2);
+  sa_nextDrawTime = millis() + DRAW_LOOP_INTERVAL;
+}
+
+void sa_drawPauseOverlay(uint16_t bgCol) {
+  tft.fillRoundRect(60, 80, 200, 80, 10, 0x18C3);
+  tft.drawRoundRect(60, 80, 200, 80, 10, TFT_WHITE);
+  tft.setTextColor(TFT_WHITE); tft.setTextSize(4);
+  tft.setCursor(85, 95); tft.print("PAUSED");
+  tft.setTextSize(1); tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(72, 145); tft.print("Press START btn to resume");
+}
+void sa_removePauseOverlay(int version) {
+  uint16_t bgCol = (version == 0) ? (uint16_t)0x001F : (uint16_t)0x0000;
+  tft.fillRoundRect(60, 80, 200, 80, 10, bgCol);
+  sa_drawPillar(sa_pillarPos, sa_gapPosition, sa_gapHeight, sa_currentpcolour, bgCol);
+  sa_drawFlappy(sa_flX, sa_flY);
+}
+
+void sa_drawLoop(int version) {
+  uint16_t bgCol = (version == 0) ? (uint16_t)0x001F : (uint16_t)0x0000;
+  sa_clearPillar(sa_pillarPos, sa_gapPosition, sa_gapHeight, bgCol);
+  sa_clearFlappy(sa_flX, sa_flY, bgCol);
+
+  if (sa_running) {
+    sa_fallRate += FGRAVITY;
+    if (sa_fallRate > MAX_FALL_RATE) sa_fallRate = MAX_FALL_RATE;
+    sa_flY += sa_fallRate;
+    if (sa_flY < 0) { sa_flY = 0; sa_fallRate = 0; }
+    sa_pillarPos -= 5;
+    if (sa_pillarPos <= 0 && sa_pillarPos > -5) sa_score += 5;
+    else if (sa_pillarPos < -50) {
+      sa_pillarPos   = 250 + random(0, 7)*10;
+      sa_gapPosition = 20 + random(0, 90);
+      sa_gapHeight   = getRandomGapHeightSA();
+    }
+  }
+
+  sa_drawPillar(sa_pillarPos, sa_gapPosition, sa_gapHeight, sa_currentpcolour, bgCol);
+  sa_drawFlappy(sa_flX, sa_flY);
+
+  switch (sa_currentWing) {
+    case 0: case 1: sa_drawWing1(sa_flX, sa_flY); break;
+    case 2: case 3: sa_drawWing2(sa_flX, sa_flY); break;
+    case 4: case 5: sa_drawWing3(sa_flX, sa_flY); break;
+  }
+  sa_currentWing++;
+  if (sa_currentWing == 6) sa_currentWing = 0;
+
+  // Score box
+  uint16_t scoreBoxCol = (version == 0) ? (uint16_t)0x001F : (uint16_t)0x0000;
+  uint16_t scoreTxtCol = (version == 0) ? (uint16_t)TFT_WHITE : (uint16_t)TFT_WHITE;
+  tft.fillRect(240, 5, 70, 30, scoreBoxCol);
+  tft.setTextColor(scoreTxtCol); tft.setTextSize(2);
+  tft.setCursor(245, 10); tft.print("S:");
+  tft.setCursor(265, 10); tft.print(sa_score);
+}
+
+void sa_checkCollision(int version) {
+  if (sa_flY <= 0)             sa_crashed = true;
+  if (sa_flY + 24 >= GROUND_Y) sa_crashed = true;
+  if (sa_flX + 34 > sa_pillarPos && sa_flX < sa_pillarPos + 50)
+    if (sa_flY < sa_gapPosition || sa_flY + 24 > sa_gapPosition + sa_gapHeight)
+      sa_crashed = true;
+
+  if (sa_crashed && sa_running) {
+    sa_running = false; sa_paused = false;
+    if (sa_score > sa_highScore) sa_highScore = sa_score;
+    if (sa_score > menuHighScores[1]) menuHighScores[1] = sa_score;
+    tft.setTextColor(TFT_RED);   tft.setTextSize(5); tft.setCursor(20, 75);  tft.print("Game Over!");
+    tft.setTextColor(TFT_WHITE); tft.setTextSize(4); tft.setCursor(50, 125); tft.print("Score:");
+    tft.setCursor(220, 125); tft.setTextSize(5); tft.print(sa_score);
+    if (sa_score >= sa_highScore && sa_score > 0) {
+      tft.setCursor(50, 175); tft.setTextSize(3); tft.setTextColor(TFT_YELLOW);
+      tft.print("NEW HIGH!");
+    }
+    delay(500);
+  }
+}
 
 // ================================================================
 // =================== CONNECT 4 VARIABLES ========================
@@ -355,16 +568,11 @@ unsigned long srBlinkTimer = 0;
 int srBlinkCount = 0;
 
 float srGetSafeY(int index) {
-  float newY;
-  bool safe;
-  int attempts = 0;
+  float newY; bool safe; int attempts = 0;
   do {
-    safe = true;
-    newY = random(35, 220);
-    attempts++;
-    for (int i = 0; i < 6; i++) {
+    safe = true; newY = random(35, 220); attempts++;
+    for (int i = 0; i < 6; i++)
       if (i != index && abs(newY - srEnemies[i].y) < 28) { safe = false; break; }
-    }
   } while (!safe && attempts < 15);
   return newY;
 }
@@ -411,69 +619,44 @@ bool crLastSelectState = HIGH, crLastStartState = HIGH;
 // ================================================================
 // =================== PAGE-BASED MENU SYSTEM =====================
 // ================================================================
-
-// Get page for a given game index
 int getGamePage(int idx) { return idx / MENU_PER_PAGE; }
-// Get position within page
 int getGamePosInPage(int idx) { return idx % MENU_PER_PAGE; }
-// Get total pages
 int getTotalPages() { return (MENU_ITEMS + MENU_PER_PAGE - 1) / MENU_PER_PAGE; }
 
-// Get card top-left corner for a given position-in-page (0..5)
 void getCardXY(int pos, int &cx, int &cy) {
-  int col = pos % MENU_COLS;  // 0,1,2
-  int row = pos / MENU_COLS;  // 0,1
+  int col = pos % MENU_COLS;
+  int row = pos / MENU_COLS;
   cx = CARD_START_X + col * (CARD_W + CARD_GAP_X);
   cy = CARD_START_Y + row * (CARD_H + CARD_GAP_Y);
 }
 
 void drawMenuChrome() {
   tft.fillScreen(MENU_BG);
-
-  // Header background
   tft.fillRect(0, 0, screenWidth, MENU_HEADER_H, 0x0008);
   tft.drawFastHLine(0, MENU_HEADER_H, screenWidth, 0x1082);
-
-  // Left bracket decoration
   tft.drawFastVLine(6, 4, 28, 0x2124);
   tft.drawFastHLine(6, 4, 4, 0x2124);
   tft.drawFastHLine(6, 31, 4, 0x2124);
-
-  // Title
-  tft.setTextSize(2);
-  tft.setTextColor(0x07FF);
-  tft.setCursor(18, 8);
-  tft.print("ARCADE");
-
-  tft.setTextSize(1);
-  tft.setTextColor(0x2945);
-  tft.setCursor(18, 26);
-  tft.print("9 GAMES  v4.0  ESP32");
-
-  // Right decorative dots
-  for (int i = 0; i < 4; i++) {
+  tft.setTextSize(2); tft.setTextColor(0x07FF);
+  tft.setCursor(18, 8); tft.print("ARCADE");
+  tft.setTextSize(1); tft.setTextColor(0x2945);
+  tft.setCursor(18, 26); tft.print("9 GAMES  v4.0  ESP32");
+  for (int i = 0; i < 4; i++)
     tft.fillCircle(screenWidth - 16 - i * 9, 19, 3,
       (i==0)?0xF800:(i==1)?0xFFE0:(i==2)?0x07E0:0x07FF);
-  }
-
-  // Right bracket decoration
   tft.drawFastVLine(screenWidth - 6, 4, 28, 0x2124);
   tft.drawFastHLine(screenWidth - 10, 4, 4, 0x2124);
   tft.drawFastHLine(screenWidth - 10, 31, 4, 0x2124);
-
-  // Page indicator at bottom
   int totalPages = getTotalPages();
   int dotY = screenHeight - 8;
   int dotSpacing = 14;
   int dotStartX = screenWidth/2 - (totalPages * dotSpacing)/2;
   for (int p = 0; p < totalPages; p++) {
-    uint16_t dc = (p == menuPage) ? 0x07FF : 0x2104;
+    uint16_t dc = (p == menuPage) ? 0x07FF : (uint16_t)0x2104;
     int dx = dotStartX + p * dotSpacing;
     if (p == menuPage) tft.fillCircle(dx, dotY, 4, dc);
     else tft.drawCircle(dx, dotY, 3, dc);
   }
-
-  // Footer line
   tft.drawFastHLine(0, screenHeight - 15, screenWidth, 0x1082);
   tft.fillRect(0, screenHeight - 14, screenWidth, 14, 0x0008);
   tft.setTextSize(1);
@@ -483,155 +666,118 @@ void drawMenuChrome() {
   tft.setTextColor(0x2945); tft.setCursor(116,screenHeight - 11); tft.print("Launch");
   tft.setTextColor(0x07FF); tft.setCursor(170,screenHeight - 11); tft.print("LR");
   tft.setTextColor(0x2945); tft.setCursor(184,screenHeight - 11); tft.print("PgFlip");
-  tft.setTextColor(0x1082); tft.setCursor(screenWidth-50, screenHeight - 11);
   char pbuf[8]; sprintf(pbuf,"P%d/%d", menuPage+1, getTotalPages());
-  tft.setTextColor(0xFFE0); tft.print(pbuf);
+  tft.setTextColor(0xFFE0); tft.setCursor(screenWidth-50, screenHeight - 11); tft.print(pbuf);
 }
 
 void drawMenuCard(int idx, bool active) {
   if (idx < 0 || idx >= MENU_ITEMS) return;
   int pos = getGamePosInPage(idx);
-  int cx, cy;
-  getCardXY(pos, cx, cy);
-
+  int cx, cy; getCardXY(pos, cx, cy);
   uint16_t accent = GAME_ACCENT[idx];
   uint16_t dim    = GAME_DIM[idx];
 
-  // Card background
   if (active) {
     tft.fillRoundRect(cx, cy, CARD_W, CARD_H, 5, dim);
-    // Accent left bar
     tft.fillRoundRect(cx, cy, 4, CARD_H, 2, accent);
-    // Accent top border
     tft.drawFastHLine(cx, cy, CARD_W, accent);
     tft.drawFastHLine(cx, cy+1, CARD_W, accent);
-    // Glow corner
     tft.drawRoundRect(cx+1, cy+1, CARD_W-2, CARD_H-2, 4, (uint16_t)(accent >> 1));
   } else {
     tft.fillRoundRect(cx, cy, CARD_W, CARD_H, 5, MENU_BG);
     tft.drawRoundRect(cx, cy, CARD_W, CARD_H, 5, 0x1082);
   }
 
-  // Icon area (top portion of card)
   int iconBgH = 38;
   uint16_t iconBg = active ? (uint16_t)(dim | 0x0820) : (uint16_t)0x0821;
   tft.fillRect(cx+4, cy+3, CARD_W-8, iconBgH, iconBg);
   tft.drawFastHLine(cx+4, cy+3+iconBgH, CARD_W-8, active ? accent : (uint16_t)0x1082);
 
-  // Draw pixel icon centered in icon area
   int iconCX = cx + CARD_W/2;
   int iconCY = cy + 3 + iconBgH/2;
   uint16_t ic = active ? accent : (uint16_t)0x2104;
 
   switch (idx) {
-    case 0: // Snake
+    case 0:
       tft.drawFastHLine(iconCX-8, iconCY, 10, ic);
       tft.drawFastVLine(iconCX+2, iconCY, 8, ic);
       tft.drawFastHLine(iconCX-4, iconCY+8, 7, ic);
       tft.fillRect(iconCX-7, iconCY-4, 6, 5, ic);
-      tft.fillCircle(iconCX-4, iconCY-5, 1, active ? (uint16_t)0x0000 : ic);
-      break;
-    case 1: // Flappy Bird
+      tft.fillCircle(iconCX-4, iconCY-5, 1, active ? (uint16_t)0x0000 : ic); break;
+    case 1:
       tft.fillTriangle(iconCX-10, iconCY+2, iconCX+10, iconCY-4, iconCX+10, iconCY+8, ic);
       tft.fillCircle(iconCX+8, iconCY-4, 3, ic);
       tft.fillRect(iconCX-9, iconCY-10, 4, 22, ic);
-      tft.fillRect(iconCX+9, iconCY-10, 4, 22, ic);
-      break;
-    case 2: // Connect 4
+      tft.fillRect(iconCX+9, iconCY-10, 4, 22, ic); break;
+    case 2:
       for(int r=0;r<2;r++) for(int c=0;c<4;c++)
-        tft.fillCircle(iconCX-9+c*6, iconCY-3+r*7, 2, ic);
-      break;
-    case 3: // Tic Tac Toe
+        tft.fillCircle(iconCX-9+c*6, iconCY-3+r*7, 2, ic); break;
+    case 3:
       tft.drawFastVLine(iconCX-3, iconCY-8, 16, ic);
       tft.drawFastVLine(iconCX+3, iconCY-8, 16, ic);
       tft.drawFastHLine(iconCX-8, iconCY-3, 16, ic);
-      tft.drawFastHLine(iconCX-8, iconCY+3, 16, ic);
-      break;
-    case 4: // RPS fist
+      tft.drawFastHLine(iconCX-8, iconCY+3, 16, ic); break;
+    case 4:
       tft.fillRoundRect(iconCX-6, iconCY, 12, 8, 2, ic);
-      for(int f=0;f<4;f++) tft.fillRoundRect(iconCX-6+f*3, iconCY-6, 2, 7, 1, ic);
-      break;
-    case 5: // Ninja
+      for(int f=0;f<4;f++) tft.fillRoundRect(iconCX-6+f*3, iconCY-6, 2, 7, 1, ic); break;
+    case 5:
       tft.fillRect(iconCX-8, iconCY-6, 4, 14, ic);
       tft.fillRect(iconCX+4, iconCY-6, 4, 14, ic);
-      tft.fillTriangle(iconCX, iconCY+2, iconCX-6, iconCY+2, iconCX-3, iconCY-1, ic);
-      break;
-    case 6: // Pong
+      tft.fillTriangle(iconCX, iconCY+2, iconCX-6, iconCY+2, iconCX-3, iconCY-1, ic); break;
+    case 6:
       tft.fillRect(iconCX-10, iconCY-6, 4, 12, ic);
       tft.fillRect(iconCX+6,  iconCY-6, 4, 12, ic);
-      tft.fillCircle(iconCX, iconCY, 3, ic);
-      break;
-    case 7: // Sperm
+      tft.fillCircle(iconCX, iconCY, 3, ic); break;
+    case 7:
       tft.fillCircle(iconCX+6, iconCY, 5, ic);
       tft.drawFastHLine(iconCX-8, iconCY, 10, ic);
       tft.drawPixel(iconCX-6, iconCY-1, ic);
       tft.drawPixel(iconCX-4, iconCY+1, ic);
-      tft.drawPixel(iconCX-2, iconCY-1, ic);
-      break;
-    case 8: // Car
+      tft.drawPixel(iconCX-2, iconCY-1, ic); break;
+    case 8:
       tft.fillRoundRect(iconCX-5, iconCY-8, 10, 16, 2, ic);
       tft.fillRect(iconCX-7, iconCY-4, 2, 5, ic);
       tft.fillRect(iconCX+5, iconCY-4, 2, 5, ic);
-      tft.fillRect(iconCX-3, iconCY-4, 6, 5, active ? iconBg : (uint16_t)MENU_BG);
-      break;
+      tft.fillRect(iconCX-3, iconCY-4, 6, 5, active ? iconBg : (uint16_t)MENU_BG); break;
   }
 
-  // Game name
   tft.setTextSize(1);
   tft.setTextColor(active ? accent : (uint16_t)0x528A);
-  tft.setCursor(cx + 5, cy + iconBgH + 7);
-  tft.print(GAME_NAMES[idx]);
+  tft.setCursor(cx + 5, cy + iconBgH + 7); tft.print(GAME_NAMES[idx]);
 
-  // Subtitle
   tft.setTextColor(active ? (uint16_t)0x3186 : (uint16_t)0x2104);
-  tft.setCursor(cx + 5, cy + iconBgH + 18);
-  tft.print(GAME_SUBTITLES[idx]);
+  tft.setCursor(cx + 5, cy + iconBgH + 18); tft.print(GAME_SUBTITLES[idx]);
 
-  // Badge and score on same line
-  // Badge pill
   int badgeX = cx + CARD_W - 22;
   int badgeY = cy + iconBgH + 5;
   tft.fillRoundRect(badgeX, badgeY, 18, 10, 2, active ? accent : (uint16_t)0x1082);
   tft.setTextSize(1);
   tft.setTextColor(active ? (uint16_t)MENU_BG : (uint16_t)0x2945);
-  tft.setCursor(badgeX + 1, badgeY + 2);
-  tft.print(GAME_MODE_BADGE[idx]);
+  tft.setCursor(badgeX + 1, badgeY + 2); tft.print(GAME_MODE_BADGE[idx]);
 
-  // High score
   tft.setTextColor(active ? accent : (uint16_t)0x2104);
   tft.setCursor(cx + 5, cy + iconBgH + 30);
   char sbuf[10]; sprintf(sbuf, "HI:%04d", menuHighScores[idx]);
   tft.print(sbuf);
 
-  // Active arrow indicator (bottom right)
-  if (active) {
+  if (active)
     tft.fillTriangle(cx+CARD_W-8, cy+CARD_H-10,
                      cx+CARD_W-8, cy+CARD_H-4,
                      cx+CARD_W-3, cy+CARD_H-7, accent);
-  }
 }
 
 void showMenu() {
   drawMenuChrome();
   int startIdx = menuPage * MENU_PER_PAGE;
-  int endIdx = min(startIdx + MENU_PER_PAGE, MENU_ITEMS);
-  for (int i = startIdx; i < endIdx; i++) {
-    drawMenuCard(i, i == selectedGame);
-  }
+  int endIdx   = min(startIdx + MENU_PER_PAGE, MENU_ITEMS);
+  for (int i = startIdx; i < endIdx; i++) drawMenuCard(i, i == selectedGame);
 }
 
-// Update just the two changed cards (or full redraw if page changed)
 void updateMenuSelection(int oldSel, int newSel) {
   int oldPage = getGamePage(oldSel);
   int newPage = getGamePage(newSel);
-
-  if (oldPage != newPage) {
-    menuPage = newPage;
-    showMenu();  // full redraw on page change
-  } else {
-    drawMenuCard(oldSel, false);
-    drawMenuCard(newSel, true);
-  }
+  if (oldPage != newPage) { menuPage = newPage; showMenu(); }
+  else { drawMenuCard(oldSel, false); drawMenuCard(newSel, true); }
 }
 
 void returnToMenu() {
@@ -640,113 +786,183 @@ void returnToMenu() {
 }
 
 // ================================================================
+// =================== FLAPPY SUBMENU =============================
+// ================================================================
+void showFlappySubmenu() {
+  currentGame = GAME_FLAPPY_SUBMENU;
+  flappySubSelected = 0;
+
+  tft.fillScreen(0x0000);
+
+  // Header
+  tft.fillRect(0, 0, 320, 36, 0x0008);
+  tft.drawFastHLine(0, 36, 320, 0xFFE0);
+  tft.setTextSize(2); tft.setTextColor(0xFFE0);
+  tft.setCursor(10, 10); tft.print("FLAPPY BIRD");
+  tft.setTextSize(1); tft.setTextColor(0x2945);
+  tft.setCursor(10, 28); tft.print("Choose your version");
+
+  // Back hint
+  tft.drawFastHLine(0, 224, 320, 0x1082);
+  tft.fillRect(0, 225, 320, 15, 0x0008);
+  tft.setTextSize(1); tft.setTextColor(0x3186);
+  tft.setCursor(8, 228); tft.print("[B] Back");
+  tft.setTextColor(0x07E0); tft.setCursor(110, 228); tft.print("[A/SELECT]");
+  tft.setTextColor(0x2945); tft.setCursor(195, 228); tft.print("Launch");
+
+  // Draw the 3 version cards (vertical list)
+  const char* vNames[]    = {"Flappy Bird Day 1",   "Flappy Bird Night 1",  "Flappy Bird Night 2"};
+  const char* vSubtitles[]= {"Blue sky, green pipes","Dark sky, bitmap bird","Black sky, white pipes"};
+  const uint16_t vAccent[]= {0xFFE0, 0x07FF, 0x7BEF};
+  const uint16_t vDim[]   = {0x2200, 0x020A, 0x1082};
+
+  for (int i = 0; i < 3; i++) {
+    bool sel = (i == flappySubSelected);
+    int cy = 46 + i * 58;
+    if (sel) {
+      tft.fillRoundRect(8, cy, 304, 52, 6, vDim[i]);
+      tft.fillRoundRect(8, cy, 5, 52, 3, vAccent[i]);
+      tft.drawRoundRect(8, cy, 304, 52, 6, vAccent[i]);
+      tft.drawFastVLine(9, cy+1, 50, (uint16_t)(vAccent[i]>>1));
+    } else {
+      tft.fillRoundRect(8, cy, 304, 52, 6, 0x0821);
+      tft.drawRoundRect(8, cy, 304, 52, 6, 0x1082);
+    }
+
+    // Number badge
+    tft.fillCircle(32, cy+26, 14, sel ? vAccent[i] : (uint16_t)0x1082);
+    tft.setTextSize(2);
+    tft.setTextColor(sel ? (uint16_t)0x0000 : (uint16_t)0x2945);
+    tft.setCursor(26, cy+18); tft.print(i+1);
+
+    // Name
+    tft.setTextSize(1);
+    tft.setTextColor(sel ? vAccent[i] : (uint16_t)0x528A);
+    tft.setCursor(56, cy+12); tft.print(vNames[i]);
+
+    // Subtitle
+    tft.setTextColor(sel ? (uint16_t)0x3186 : (uint16_t)0x2104);
+    tft.setCursor(56, cy+26); tft.print(vSubtitles[i]);
+
+    // Arrow if selected
+    if (sel) {
+      tft.fillTriangle(298, cy+20, 298, cy+32, 304, cy+26, vAccent[i]);
+    }
+  }
+}
+
+void updateFlappySubmenu(int oldSel, int newSel) {
+  const uint16_t vAccent[]= {0xFFE0, 0x07FF, 0x7BEF};
+  const uint16_t vDim[]   = {0x2200, 0x020A, 0x1082};
+  const char* vNames[]    = {"Flappy Bird Day 1",   "Flappy Bird Night 1",  "Flappy Bird Night 2"};
+  const char* vSubtitles[]= {"Blue sky, green pipes","Dark sky, bitmap bird","Black sky, white pipes"};
+
+  // Redraw just the two affected rows
+  for (int idx = 0; idx < 3; idx++) {
+    if (idx != oldSel && idx != newSel) continue;
+    bool sel = (idx == newSel);
+    int cy = 46 + idx * 58;
+    if (sel) {
+      tft.fillRoundRect(8, cy, 304, 52, 6, vDim[idx]);
+      tft.fillRoundRect(8, cy, 5, 52, 3, vAccent[idx]);
+      tft.drawRoundRect(8, cy, 304, 52, 6, vAccent[idx]);
+      tft.drawFastVLine(9, cy+1, 50, (uint16_t)(vAccent[idx]>>1));
+    } else {
+      tft.fillRoundRect(8, cy, 304, 52, 6, 0x0821);
+      tft.drawRoundRect(8, cy, 304, 52, 6, 0x1082);
+    }
+    tft.fillCircle(32, cy+26, 14, sel ? vAccent[idx] : (uint16_t)0x1082);
+    tft.setTextSize(2);
+    tft.setTextColor(sel ? (uint16_t)0x0000 : (uint16_t)0x2945);
+    tft.setCursor(26, cy+18); tft.print(idx+1);
+    tft.setTextSize(1);
+    tft.setTextColor(sel ? vAccent[idx] : (uint16_t)0x528A);
+    tft.setCursor(56, cy+12); tft.print(vNames[idx]);
+    tft.setTextColor(sel ? (uint16_t)0x3186 : (uint16_t)0x2104);
+    tft.setCursor(56, cy+26); tft.print(vSubtitles[idx]);
+    if (sel) tft.fillTriangle(298, cy+20, 298, cy+32, 304, cy+26, vAccent[idx]);
+    else     tft.fillRect(296, cy+18, 10, 16, 0x0821);
+  }
+}
+
+// Launch whichever flappy version is selected
+void launchFlappyVersion(int version) {
+  flappyVersion = version;
+  if (version == 1) {
+    // Original "Night 1" bitmap bird version (existing Flappy code)
+    currentGame = GAME_FLAPPY;
+    showStartScreenFlappy();
+  } else {
+    // Day (0) or Night 2 (2) — standalone pixel-art versions
+    currentGame = GAME_FLAPPY;  // reuse GAME_FLAPPY state machine below
+    // We flag which version via flappyVersion
+    sa_startGame(version);
+  }
+}
+
+// ================================================================
 // =================== SNAKE START SCREEN =========================
 // ================================================================
 void showStartScreenSnake() {
   tft.fillScreen(COL_BG);
-
-  // Animated border
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 3; i++)
     tft.drawRect(i, i, screenWidth - i*2, screenHeight - i*2,
       (i==0) ? COL_GOLD : (i==1) ? (uint16_t)0x3186 : COL_BG);
-  }
 
-  // Title block
   tft.fillRoundRect(40, 20, 240, 55, 10, 0x0008);
   tft.drawRoundRect(40, 20, 240, 55, 10, COL_GOLD);
   tft.drawRoundRect(42, 22, 236, 51, 8, 0x3186);
+  tft.setTextSize(4); tft.setTextColor(COL_SNAKE_BODY);
+  tft.setCursor(73, 32); tft.print("SNAKE");
+  tft.setTextSize(1); tft.setTextColor(0x07FF);
+  tft.setCursor(100, 68); tft.print("EAT  GROW  SURVIVE");
 
-  tft.setTextSize(4);
-  tft.setTextColor(COL_SNAKE_BODY);
-  tft.setCursor(73, 32);
-  tft.print("SNAKE");
-
-  // Subtitle
-  tft.setTextSize(1);
-  tft.setTextColor(0x07FF);
-  tft.setCursor(100, 68);
-  tft.print("EAT  GROW  SURVIVE");
-
-  // Draw a decorative snake
-  // Body segments
   uint16_t bodyColor = COL_SNAKE_BODY;
   int sx = 55, sy = 105;
-  // Horizontal body going right
   for (int i = 0; i < 8; i++) {
     uint16_t segColor = (i == 0) ? COL_SNAKE_HEAD : bodyColor;
     tft.fillRoundRect(sx + i*14, sy, 12, 12, 3, segColor);
-    if (i < 7) {
-      tft.fillRect(sx + i*14 + 12, sy+3, 2, 6, bodyColor);
-    }
+    if (i < 7) tft.fillRect(sx + i*14 + 12, sy+3, 2, 6, bodyColor);
   }
-  // Head eyes
-  tft.fillCircle(sx+3, sy+3, 2, COL_BG);
-  tft.fillCircle(sx+9, sy+3, 2, COL_BG);
-  tft.fillCircle(sx+3, sy+3, 1, COL_SCORE);
-  tft.fillCircle(sx+9, sy+3, 1, COL_SCORE);
-  // Tongue
+  tft.fillCircle(sx+3, sy+3, 2, COL_BG); tft.fillCircle(sx+9, sy+3, 2, COL_BG);
+  tft.fillCircle(sx+3, sy+3, 1, COL_SCORE); tft.fillCircle(sx+9, sy+3, 1, COL_SCORE);
   tft.drawFastHLine(sx+4, sy+12, 4, 0xF800);
-  tft.drawPixel(sx+4, sy+14, 0xF800);
-  tft.drawPixel(sx+8, sy+14, 0xF800);
-
-  // Food dot near snake
+  tft.drawPixel(sx+4, sy+14, 0xF800); tft.drawPixel(sx+8, sy+14, 0xF800);
   tft.fillCircle(sx + 8*14 + 14, sy+6, 7, COL_FOOD);
   tft.fillCircle(sx + 8*14 + 14, sy+6, 4, COL_SCORE);
   tft.fillCircle(sx + 8*14 + 14, sy+6, 2, 0x001F);
 
-  // Info box
   tft.fillRoundRect(20, 128, 280, 68, 8, 0x0008);
   tft.drawRoundRect(20, 128, 280, 68, 8, 0x2945);
-
-  tft.setTextSize(1);
-  tft.setTextColor(0x07FF);
-  tft.setCursor(30, 138);
-  tft.print("UP/DN/LR : Move snake");
+  tft.setTextSize(1); tft.setTextColor(0x07FF);
+  tft.setCursor(30, 138); tft.print("UP/DN/LR : Move snake");
   tft.setTextColor(COL_GOLD);
-  tft.setCursor(30, 152);
-  tft.print("SELECT   : Pause / Resume");
+  tft.setCursor(30, 152); tft.print("SELECT   : Pause / Resume");
   tft.setTextColor(0xAFE5);
-  tft.setCursor(30, 166);
-  tft.print("B        : Back to menu");
+  tft.setCursor(30, 166); tft.print("B        : Back to menu");
   tft.setTextColor(0x3186);
   tft.setCursor(30, 180);
   char hsbuf[24]; sprintf(hsbuf, "Best Score : %d", highScoreSnake);
   tft.print(hsbuf);
 
-  // Blinking start prompt
   tft.fillRoundRect(60, 202, 200, 22, 5, COL_SNAKE_BODY);
   tft.drawRoundRect(60, 202, 200, 22, 5, COL_GOLD);
-  tft.setTextSize(1);
-  tft.setTextColor(COL_BG);
-  tft.setCursor(68, 209);
-  tft.print("> PRESS SELECT TO START <");
+  tft.setTextSize(1); tft.setTextColor(COL_BG);
+  tft.setCursor(68, 209); tft.print("> PRESS SELECT TO START <");
 
-  // Wait for SELECT press (with blinking prompt and B to go back)
-  unsigned long blinkTimer = millis();
-  bool blinkState = true;
+  unsigned long blinkTimer = millis(); bool blinkState = true;
   while (true) {
     if (millis() - blinkTimer > 400) {
-      blinkTimer = millis();
-      blinkState = !blinkState;
+      blinkTimer = millis(); blinkState = !blinkState;
       uint16_t btnBg  = blinkState ? COL_SNAKE_BODY : (uint16_t)0x03E0;
       uint16_t btnTxt = blinkState ? (uint16_t)COL_BG : (uint16_t)0xFFFF;
       tft.fillRoundRect(60, 202, 200, 22, 5, btnBg);
       tft.drawRoundRect(60, 202, 200, 22, 5, COL_GOLD);
-      tft.setTextSize(1);
-      tft.setTextColor(btnTxt);
-      tft.setCursor(68, 209);
-      tft.print("> PRESS SELECT TO START <");
+      tft.setTextSize(1); tft.setTextColor(btnTxt);
+      tft.setCursor(68, 209); tft.print("> PRESS SELECT TO START <");
     }
-    if (digitalRead(BTN_SELECT) == LOW) {
-      delay(200);
-      resetSnakeGame();
-      return;
-    }
-    if (digitalRead(BTN_B) == LOW) {
-      delay(200);
-      returnToMenu();
-      return;
-    }
+    if (digitalRead(BTN_SELECT) == LOW) { delay(200); resetSnakeGame(); return; }
+    if (digitalRead(BTN_B) == LOW)      { delay(200); returnToMenu(); return; }
     delay(20);
   }
 }
@@ -760,7 +976,6 @@ void updateSnakeScoreDisplay() {
   tft.setCursor(10, 5); tft.print("Score: "); tft.print(score);
   tft.setCursor(tft.width()-150, 5); tft.print("HIGH: "); tft.print(highScoreSnake);
 }
-
 void showSnakePauseScreen(bool pause) {
   if (pause) {
     tft.fillRect(60,80,200,60,0x001F); tft.drawRect(60,80,200,60,COL_SCORE);
@@ -772,7 +987,6 @@ void showSnakePauseScreen(bool pause) {
     if (bonusActive) drawBonusFood(false);
   }
 }
-
 void spawnFood() {
   drawSnakeFood(true);
   int maxGX=(tft.width()-20)/SNAKE_GRID, maxGY=(tft.height()-50)/SNAKE_GRID;
@@ -786,7 +1000,6 @@ void spawnFood() {
   } while(!ok);
   drawSnakeFood(false);
 }
-
 void spawnBonusFood() {
   if(bonusActive) return;
   bonusActive=true; bonusStartTime=millis();
@@ -802,7 +1015,6 @@ void spawnBonusFood() {
   } while(!ok);
   drawBonusFood(false);
 }
-
 void drawSnakePart(int index, bool erase) {
   int x=snake[index].x*SNAKE_GRID+10, y=snake[index].y*SNAKE_GRID+40;
   if(erase){tft.fillRect(x,y,SNAKE_GRID,SNAKE_GRID,COL_BG);return;}
@@ -813,14 +1025,12 @@ void drawSnakePart(int index, bool erase) {
     tft.fillCircle(x+3,y+3,1,COL_SCORE); tft.fillCircle(x+SNAKE_GRID-4,y+3,1,COL_SCORE);
   }
 }
-
 void drawSnakeFood(bool erase) {
   if(erase){tft.fillCircle(food.x,food.y,8,COL_BG);return;}
   tft.fillCircle(food.x,food.y,7,COL_FOOD);
   tft.fillCircle(food.x,food.y,4,COL_SCORE);
   tft.fillCircle(food.x,food.y,2,0x001F);
 }
-
 void drawBonusFood(bool erase) {
   if(!bonusActive&&!erase) return;
   if(erase){tft.fillCircle(bonusFood.x,bonusFood.y,15,COL_BG);return;}
@@ -833,7 +1043,6 @@ void drawBonusFood(bool erase) {
     tft.fillCircle(bonusFood.x+cos(a)*12,bonusFood.y+sin(a)*12,2,COL_GOLD);
   }
 }
-
 void showSnakeGameOver() {
   if(score>highScoreSnake){highScoreSnake=score;menuHighScores[0]=highScoreSnake;}
   tft.fillScreen(COL_BG);
@@ -851,7 +1060,6 @@ void showSnakeGameOver() {
   while(digitalRead(BTN_SELECT)==HIGH&&digitalRead(BTN_A)==HIGH) delay(50);
   delay(300); returnToMenu();
 }
-
 void resetSnakeGame() {
   tft.fillScreen(COL_BG);
   snakeLen=5; score=0; foodCounter=0; moveDelay=150;
@@ -863,7 +1071,6 @@ void resetSnakeGame() {
   spawnFood(); updateSnakeScoreDisplay();
   lastMoveTime=millis(); lastPulseTime=millis();
 }
-
 void runSnakeGame() {
   static unsigned long lastSelectPress=0,lastBPress=0;
   if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){lastBPress=millis();returnToMenu();return;}
@@ -877,7 +1084,6 @@ void runSnakeGame() {
     else if(digitalRead(BTN_DOWN)==LOW&&dirY==0){dirX=0;dirY=1;}
     else if(digitalRead(BTN_LEFT)==LOW&&dirX==0){dirX=-1;dirY=0;}
     else if(digitalRead(BTN_RIGHT)==LOW&&dirX==0){dirX=1;dirY=0;}
-
     if(millis()-lastPulseTime>150){
       lastPulseTime=millis(); pulseState++;
       if(bonusActive){
@@ -917,7 +1123,7 @@ void runSnakeGame() {
 }
 
 // ================================================================
-// =================== FLAPPY BIRD ================================
+// =================== FLAPPY BIRD (Night 1 - original) ===========
 // ================================================================
 void initDots(){
   for(int i=0;i<MAX_DOTS;i++)
@@ -980,8 +1186,9 @@ void showStartScreenFlappy(){
     tft.drawPixel((int)bgDots[i].x,(int)bgDots[i].y,dc);
   }
   tft.fillRoundRect(40,25,240,70,15,PIPE_COLOR);
-  tft.setTextColor(BG_COLOR);tft.setTextSize(3);
-  tft.setCursor(85,48);tft.print("FLAPPY");tft.setCursor(100,78);tft.print("BIRD");
+  tft.setTextColor(BG_COLOR);tft.setTextSize(2);
+  tft.setCursor(60,40);tft.print("FLAPPY BIRD");
+  tft.setCursor(55,62);tft.print("--- NIGHT 1 ---");
   tft.fillRoundRect(30,110,260,115,10,PIPE_CAP_COLOR);
   tft.setTextColor(PIPE_COLOR);tft.setTextSize(1);
   tft.setCursor(55,125);tft.print("SELECT:Flap  START:Pause  B:Menu");
@@ -1004,11 +1211,18 @@ void flappyGameOver(){
   tft.setTextColor(BG_COLOR);tft.setCursor(cx-75,162);tft.print("PRESS SELECT BUTTON");
   delay(500);
   while(digitalRead(BTN_SELECT)==HIGH) delay(50);
-  delay(200); showStartScreenFlappy();
+  delay(200);
+  // Return to flappy submenu instead of main menu
+  showFlappySubmenu();
 }
-void runFlappyGame(){
+
+// The run function for Night 1
+void runFlappyNight1() {
   static unsigned long lastStartPress=0,lastSelectPress=0,lastBPress=0;
-  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){lastBPress=millis();playing=false;returnToMenu();return;}
+  if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){
+    lastBPress=millis(); playing=false;
+    showFlappySubmenu(); return;
+  }
   if(!playing){
     updateDots();
     static int blinkCtr=0;
@@ -1050,6 +1264,83 @@ void runFlappyGame(){
   }
   if(birdY<0||birdY>screenHeight-18){flappyGameOver();return;}
   updateFlappyScreen();delay(12);
+}
+
+// Run Day 1 or Night 2
+void runFlappySA(int version) {
+  static unsigned long lastBPress = 0;
+
+  if (digitalRead(BTN_B)==LOW && millis()-lastBPress>300) {
+    lastBPress = millis();
+    showFlappySubmenu(); return;
+  }
+
+  // Pause
+  if (sa_running && !sa_crashed) {
+    if (digitalRead(BTN_START)==LOW && millis()-sa_lastPausePress>300) {
+      sa_lastPausePress = millis();
+      sa_paused = !sa_paused;
+      uint16_t bgCol = (version==0) ? (uint16_t)0x001F : (uint16_t)0x0000;
+      if (sa_paused) {
+        sa_drawPauseOverlay(bgCol);
+        sa_nextDrawTime = millis() + DRAW_LOOP_INTERVAL;
+      } else {
+        sa_removePauseOverlay(version);
+        sa_nextDrawTime = millis() + DRAW_LOOP_INTERVAL;
+      }
+    }
+  }
+
+  // Fly / start button
+  if (digitalRead(BTN_SELECT)==LOW) {
+    if (millis() - sa_lastDebounce > 50) {
+      sa_lastDebounce = millis();
+      if (sa_crashed) {
+        sa_startGame(version);
+      } else if (!sa_running) {
+        sa_running  = true;
+        sa_fallRate = FLY_FORCE;
+        sa_lastFlyTime = millis();
+      } else if (!sa_paused && millis()-sa_lastFlyTime > SA_FLY_COOLDOWN) {
+        sa_fallRate    = FLY_FORCE;
+        sa_lastFlyTime = millis();
+      }
+    }
+  }
+
+  uint16_t bgCol = (version==0) ? (uint16_t)0x001F : (uint16_t)0x0000;
+  uint16_t pCol  = (version==0) ? (uint16_t)TFT_GREEN : (uint16_t)TFT_WHITE;
+
+  if (!sa_paused) {
+    if (millis() > sa_nextDrawTime && !sa_crashed) {
+      sa_drawLoop(version);
+      sa_checkCollision(version);
+      sa_nextDrawTime += DRAW_LOOP_INTERVAL;
+    }
+
+    // Show start hint
+    if (!sa_running && !sa_crashed) {
+      static unsigned long hintT = 0; static bool hintV = true;
+      if (millis()-hintT > 500) {
+        hintT = millis(); hintV = !hintV;
+        tft.setTextSize(1);
+        tft.setTextColor(hintV ? TFT_WHITE : bgCol);
+        tft.setCursor(60, 5); tft.print("> PRESS SELECT TO FLY <");
+      }
+    }
+
+    // Game-over overlay: wait for SELECT
+    if (sa_crashed) {
+      static unsigned long goWait = 0;
+      if (goWait == 0) goWait = millis();
+      if (millis()-goWait > 300 && digitalRead(BTN_SELECT)==LOW) {
+        goWait = 0; sa_startGame(version);
+      }
+    }
+
+    delay(10);
+  }
+  delay(5);
 }
 
 // ================================================================
@@ -1769,7 +2060,6 @@ void showStartScreenSperm(){
 void runSpermRaceGame(){
   static unsigned long lastBPress=0;
   if(digitalRead(BTN_B)==LOW&&millis()-lastBPress>300){lastBPress=millis();returnToMenu();return;}
-
   if(digitalRead(BTN_SELECT)==LOW&&millis()-srLastButtonPress>300){
     srLastButtonPress=millis();
     if(srDead) srResetGame();
@@ -1782,12 +2072,10 @@ void runSpermRaceGame(){
     }
   }
   if(srPaused||srDead) return;
-
   if(millis()-srLastScoreUpdate>250){
     srScore++;srLastScoreUpdate=millis();srUpdateHUD();
     if(srGameSpeed<7.0) srGameSpeed+=0.001;
   }
-
   for(int i=0;i<15;i++){
     srDrawWasteParticle((int)srWaste[i].prevX,(int)srWaste[i].prevY,srWaste[i].size,SR_BG_COLOR);
     srWaste[i].prevX=srWaste[i].x;srWaste[i].prevY=srWaste[i].y;
@@ -1795,7 +2083,6 @@ void runSpermRaceGame(){
     if(srWaste[i].x<0){srWaste[i].x=320;srWaste[i].y=random(25,230);srWaste[i].speed=random(8,25)/10.0;}
     srDrawWasteParticle((int)srWaste[i].x,(int)srWaste[i].y,srWaste[i].size,SR_WASTE_RED);
   }
-
   srPrevX=srPlayerX;srPrevY=srPlayerY;
   if(digitalRead(BTN_UP)==LOW)    srPlayerY-=srMoveSpeed;
   if(digitalRead(BTN_DOWN)==LOW)  srPlayerY+=srMoveSpeed;
@@ -1803,9 +2090,7 @@ void runSpermRaceGame(){
   if(digitalRead(BTN_RIGHT)==LOW) srPlayerX+=srMoveSpeed;
   if(srPlayerX<25)srPlayerX=25;if(srPlayerX>295)srPlayerX=295;
   if(srPlayerY<35)srPlayerY=35;if(srPlayerY>225)srPlayerY=225;
-
   srDrawSperm((int)srPrevX,(int)srPrevY,SR_BG_COLOR);
-
   for(int i=0;i<6;i++){
     tft.fillCircle((int)srEnemies[i].prevX,(int)srEnemies[i].prevY,10,SR_BG_COLOR);
     srEnemies[i].prevX=srEnemies[i].x;srEnemies[i].prevY=srEnemies[i].y;
@@ -1824,7 +2109,6 @@ void runSpermRaceGame(){
       else{srIsBlinking=true;srIsHealing=false;srBlinkCount=0;srBlinkTimer=millis();}
     }
   }
-
   if(!srBlueActive&&millis()>srNextBlueSpawn){
     srBlueActive=true;srBlueX=335;srBlueY=random(35,210);
     srPrevBlueX=srBlueX;srPrevBlueY=srBlueY;
@@ -1847,9 +2131,7 @@ void runSpermRaceGame(){
       }
     }
   }
-
   srTailPhase+=0.5;
-
   if(srIsBlinking){
     if(millis()-srBlinkTimer>80){srBlinkTimer=millis();srBlinkCount++;}
     if(srBlinkCount<6){
@@ -1857,7 +2139,6 @@ void runSpermRaceGame(){
       srDrawSperm((int)srPlayerX,(int)srPlayerY,fc);
     } else{srIsBlinking=false;srDrawSperm((int)srPlayerX,(int)srPlayerY,SR_SPERM_WHITE);}
   } else srDrawSperm((int)srPlayerX,(int)srPlayerY,SR_SPERM_WHITE);
-
   delay(16);
 }
 
@@ -1995,28 +2276,23 @@ void runCarRacingGame(){
   }
   if(digitalRead(BTN_B)==LOW&&millis()-crLastButtonPress>crDebounceDelay){crLastButtonPress=millis();crGameOver=true;returnToMenu();return;}
   if(crIsPaused){delay(10);return;}
-
   crHandleLaneChange();
   if(abs(crCurrentPlayerX-crTargetX)>2){
     if(crCurrentPlayerX<crTargetX) crCurrentPlayerX+=crSlideSpeed;
     else crCurrentPlayerX-=crSlideSpeed;
   } else crCurrentPlayerX=crTargetX;
-
   tft.fillRect(crLaneX[crEnemyLane]-25,(int)crEnemyY-5,50,(int)crGameSpeed+8,CR_ROAD_GRAY);
   crEnemyY+=crGameSpeed;
-
   if(crEnemyY>250){
     tft.fillRect(crLaneX[crEnemyLane]-25,200,50,40,CR_ROAD_GRAY);
     crScore+=crVehiclePoints[crEnemyType];
     crEnemyY=-80;crEnemyLane=random(0,3);crEnemyType=random(0,5);
     crGameSpeed+=0.05;if(crGameSpeed>8.0)crGameSpeed=8.0;
   }
-
   if(abs(crCurrentPlayerX-crLaneX[crEnemyLane])<25&&
      (crEnemyY+crVehicleHeights[crEnemyType])>195&&crEnemyY<225){
     crTriggerCrash((int)crCurrentPlayerX);crGameOver=true;crShowGameOver();return;
   }
-
   crLineOffset=(crLineOffset+(int)crGameSpeed)%48;
   for(int i=-48;i<240;i+=48){
     tft.fillRect(115,i+crLineOffset,3,24,CR_LINE_YELLOW);
@@ -2024,14 +2300,11 @@ void runCarRacingGame(){
     tft.fillRect(115,i+crLineOffset-6,3,6,CR_ROAD_GRAY);
     tft.fillRect(202,i+crLineOffset-6,3,6,CR_ROAD_GRAY);
   }
-
   crDrawPlayer(crCurrentPlayerX);
   crDrawEnemy(crEnemyLane,(int)crEnemyY,crEnemyType);
-
   tft.fillRect(250,5,65,15,CR_GRASS_BLACK);
   tft.setTextColor(TFT_WHITE);tft.setTextSize(1);tft.setCursor(255,8);
   tft.print("S:");tft.setTextColor(CR_LINE_YELLOW);tft.print(crScore);
-
   delay(16);
 }
 
@@ -2075,7 +2348,6 @@ void setup(){
       (i==0)?0xF800:(i==1)?0xFFE0:(i==2)?0x07E0:0x07FF);
   }
   delay(1800);
-
   showMenu();
 }
 
@@ -2086,23 +2358,19 @@ void loop(){
 
   switch(currentGame){
 
+    // ── MAIN MENU ──────────────────────────────────────────────
     case GAME_MENU:{
-      // UP / DOWN navigate within current page or wrap
       if(digitalRead(BTN_UP)==LOW && !upPressed && millis()-lastBtnTime>180){
         lastBtnTime=millis(); upPressed=true;
         int old=selectedGame;
-        // Move up: if on first row of page, go to previous page last row
         int posInPage = getGamePosInPage(selectedGame);
         if(posInPage < MENU_COLS){
-          // top row of page — go to previous page bottom row (same column)
           int prevPage = menuPage - 1;
           if(prevPage < 0) prevPage = getTotalPages() - 1;
           int newIdx = prevPage * MENU_PER_PAGE + (MENU_ROWS-1)*MENU_COLS + (posInPage % MENU_COLS);
           if(newIdx >= MENU_ITEMS) newIdx = MENU_ITEMS - 1;
           selectedGame = newIdx;
-        } else {
-          selectedGame -= MENU_COLS;
-        }
+        } else selectedGame -= MENU_COLS;
         updateMenuSelection(old, selectedGame);
       } else if(digitalRead(BTN_UP)==HIGH) upPressed=false;
 
@@ -2111,7 +2379,6 @@ void loop(){
         int old=selectedGame;
         int posInPage = getGamePosInPage(selectedGame);
         if(posInPage >= (MENU_ROWS-1)*MENU_COLS){
-          // bottom row of page — go to next page top row (same column)
           int nextPage = menuPage + 1;
           if(nextPage >= getTotalPages()) nextPage = 0;
           int col = posInPage % MENU_COLS;
@@ -2125,23 +2392,19 @@ void loop(){
         updateMenuSelection(old, selectedGame);
       } else if(digitalRead(BTN_DOWN)==HIGH) downPressed=false;
 
-      // LEFT / RIGHT navigate within row OR flip page
       if(digitalRead(BTN_LEFT)==LOW && !leftPressed && millis()-lastBtnTime>180){
         lastBtnTime=millis(); leftPressed=true;
         int old=selectedGame;
         int posInPage = getGamePosInPage(selectedGame);
         int col = posInPage % MENU_COLS;
         if(col == 0){
-          // Leftmost column: flip to previous page, same row, rightmost col
           int row = posInPage / MENU_COLS;
           int prevPage = menuPage - 1;
           if(prevPage < 0) prevPage = getTotalPages() - 1;
           int newIdx = prevPage * MENU_PER_PAGE + row*MENU_COLS + (MENU_COLS-1);
           if(newIdx >= MENU_ITEMS) newIdx = MENU_ITEMS - 1;
           selectedGame = newIdx;
-        } else {
-          selectedGame--;
-        }
+        } else selectedGame--;
         updateMenuSelection(old, selectedGame);
       } else if(digitalRead(BTN_LEFT)==HIGH) leftPressed=false;
 
@@ -2152,7 +2415,6 @@ void loop(){
         int col = posInPage % MENU_COLS;
         int row = posInPage / MENU_COLS;
         if(col == MENU_COLS-1){
-          // Rightmost column: flip to next page, same row, leftmost col
           int nextPage = menuPage + 1;
           if(nextPage >= getTotalPages()) nextPage = 0;
           int newIdx = nextPage * MENU_PER_PAGE + row*MENU_COLS;
@@ -2160,18 +2422,18 @@ void loop(){
           selectedGame = newIdx;
         } else {
           int newIdx = selectedGame + 1;
-          if(newIdx >= MENU_ITEMS) newIdx = menuPage * MENU_PER_PAGE; // wrap to page start
+          if(newIdx >= MENU_ITEMS) newIdx = menuPage * MENU_PER_PAGE;
           selectedGame = newIdx;
         }
         updateMenuSelection(old, selectedGame);
       } else if(digitalRead(BTN_RIGHT)==HIGH) rightPressed=false;
 
-      // A button: launch game
+      // A button: launch game (Flappy → submenu first)
       if(digitalRead(BTN_A)==LOW && millis()-lastBtnTime>200){
         lastBtnTime=millis();
         switch(selectedGame){
           case 0: currentGame=GAME_SNAKE;     showStartScreenSnake();   break;
-          case 1: currentGame=GAME_FLAPPY;    showStartScreenFlappy();  break;
+          case 1: showFlappySubmenu();                                   break; // ← SUBMENU
           case 2: currentGame=GAME_CONNECT4;  resetGameC4();            break;
           case 3: currentGame=GAME_TICTACTOE; resetTTTGame();           break;
           case 4: currentGame=GAME_RPS;
@@ -2185,8 +2447,52 @@ void loop(){
       break;
     }
 
+    // ── FLAPPY SUBMENU ─────────────────────────────────────────
+    case GAME_FLAPPY_SUBMENU:{
+      static unsigned long lastSubBtn = 0;
+
+      // Navigate
+      if(digitalRead(BTN_UP)==LOW && !upPressed && millis()-lastSubBtn>180){
+        lastSubBtn=millis(); upPressed=true;
+        int old = flappySubSelected;
+        flappySubSelected--;
+        if(flappySubSelected < 0) flappySubSelected = 2;
+        updateFlappySubmenu(old, flappySubSelected);
+      } else if(digitalRead(BTN_UP)==HIGH) upPressed=false;
+
+      if(digitalRead(BTN_DOWN)==LOW && !downPressed && millis()-lastSubBtn>180){
+        lastSubBtn=millis(); downPressed=true;
+        int old = flappySubSelected;
+        flappySubSelected++;
+        if(flappySubSelected > 2) flappySubSelected = 0;
+        updateFlappySubmenu(old, flappySubSelected);
+      } else if(digitalRead(BTN_DOWN)==HIGH) downPressed=false;
+
+      // Launch
+      if((digitalRead(BTN_A)==LOW || digitalRead(BTN_SELECT)==LOW) && millis()-lastSubBtn>300){
+        lastSubBtn=millis();
+        launchFlappyVersion(flappySubSelected);
+      }
+
+      // Back to main menu
+      if(digitalRead(BTN_B)==LOW && millis()-lastSubBtn>300){
+        lastSubBtn=millis();
+        returnToMenu();
+      }
+      break;
+    }
+
+    // ── FLAPPY (all versions) ──────────────────────────────────
+    case GAME_FLAPPY:{
+      if(flappyVersion == 1) {
+        runFlappyNight1();
+      } else {
+        runFlappySA(flappyVersion);  // 0 = Day, 2 = Night 2
+      }
+      break;
+    }
+
     case GAME_SNAKE:     runSnakeGame();      break;
-    case GAME_FLAPPY:    runFlappyGame();     break;
     case GAME_CONNECT4:  runConnect4Game();   break;
     case GAME_TICTACTOE: runTicTacToe();      break;
     case GAME_RPS:       runRPSGame();        break;
@@ -2198,3 +2504,4 @@ void loop(){
 
   delay(10);
 }
+
