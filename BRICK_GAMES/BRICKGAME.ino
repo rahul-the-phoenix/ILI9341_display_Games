@@ -428,32 +428,6 @@ void drawGameOver() {
   // Animated border pulse effect (will be handled in loop)
 }
 
-// void drawGameOver() {
-//   tft.fillRect(60, 80, 200, 80, 0x1082);
-//   tft.drawRect(60, 80, 200, 80, TFT_RED);
-//   tft.setTextColor(TFT_RED);
-//   tft.setTextSize(2);
-//   tft.setCursor(85, 90);
-//   tft.print("GAME OVER");
-//   tft.setTextSize(1);
-//   tft.setTextColor(TFT_WHITE);
-//   tft.setCursor(80, 118);
-//   tft.print("Score: ");
-//   tft.print(score);
-//   if (score >= hiScore) {
-//     tft.setTextColor(TFT_YELLOW);
-//     tft.setCursor(75, 132);
-//     tft.print("NEW HI-SCORE!");
-//   } else {
-//     tft.setTextColor(TFT_CYAN);
-//     tft.setCursor(75, 132);
-//     tft.print("Hi-Score: ");
-//     tft.print(hiScore);
-//   }
-//   tft.setTextColor(TFT_GREEN);
-//   tft.setCursor(85, 148);
-//   tft.print("SELECT to restart");
-// }
 
 void drawLevelClear() {
   tft.fillRect(60, 90, 200, 60, 0x1082);
