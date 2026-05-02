@@ -26,9 +26,6 @@ TFT_eSPI tft = TFT_eSPI();
 #define SCR_H  240
 
 // ─── Tile types ───────────────────────────────────────────────────
-
-
-// ─── Tile types ───────────────────────────────────────────────────
 #define T_FLOOR   0
 #define T_TARGET  1
 #define T_PLAYER  2
@@ -103,18 +100,6 @@ const StageData STAGES[NUM_STAGES] PROGMEM = {
 }},
 
 // stage3  8×10
-{ 8, 10, {
-  {4,4,4,4,4,4,4,4,4,4},
-  {4,4,2,0,4,4,4,4,4,4},
-  {4,4,0,5,0,0,4,4,4,4},
-  {4,4,4,0,4,0,4,4,4,4},
-  {4,1,4,0,4,0,0,4,4,4},
-  {4,1,5,0,0,4,0,4,4,4},
-  {4,1,0,0,0,5,0,4,4,4},
-  {4,4,4,4,4,4,4,4,4,4},
-}},
-
-// stage4  8×6
 { 8, 6, {
   {4,4,4,4,4,4},
   {4,4,0,0,4,4},
@@ -124,6 +109,19 @@ const StageData STAGES[NUM_STAGES] PROGMEM = {
   {4,1,5,0,0,4},
   {4,1,1,3,1,4},
   {4,4,4,4,4,4},
+}},
+
+
+// stage4  8×6
+{ 8, 10, {
+  {4,4,4,4,4,4,4,4,4,4},
+  {4,4,2,0,4,4,4,4,4,4},
+  {4,4,0,5,0,0,4,4,4,4},
+  {4,4,4,0,4,0,4,4,4,4},
+  {4,1,4,0,4,0,0,4,4,4},
+  {4,1,5,0,0,4,0,4,4,4},
+  {4,1,0,0,0,5,0,4,4,4},
+  {4,4,4,4,4,4,4,4,4,4},
 }},
 
 // stage5  8×8
@@ -328,7 +326,6 @@ uint16_t moves;
 int      currentLevel    = 0;
 int      totalTargets    = 0;
 bool     levelComplete   = false;
-bool     isPaused        = false;
 bool     onTitleScreen   = true;
 bool     onLevelSelect   = false;
 int      levelSelectCursor = 0;
@@ -504,7 +501,6 @@ void loadLevel(int lvl) {
   undoTop    = 0;
   totalTargets = 0;
   levelComplete = false;
-  isPaused      = false;
 
   for (int8_t r = 0; r < rows; r++) {
     for (int8_t c = 0; c < cols; c++) {
@@ -693,12 +689,12 @@ void showTitleScreen() {
 
   tft.setTextColor(C_UI_TXT); tft.setTextSize(1);
   tft.setCursor(28, 148);
-  tft.print("UP/DN/LR:Move  B:Undo  SEL:Restart  STA:Pause");
+  tft.print("UP/DN/LR:Move  A:Undo  SEL:Menu  STA:Restart");
   tft.setCursor(28, 162); tft.print("20 handcrafted levels. Good luck!");
 
   tft.setTextColor(C_UI_ACC); tft.setTextSize(2);
-  tft.setCursor(62, 185); tft.print("Press A to Start");
-  tft.setCursor(42, 210); tft.print("SEL : Level Select");
+  tft.setCursor(62, 185); tft.print("Press SEL to Start");
+  tft.setCursor(42, 210); tft.print("From Menu Start Game");
 }
 
 // ─── Level select screen ──────────────────────────────────────────
@@ -738,17 +734,6 @@ void showLevelSelect() {
       tft.setCursor(bx+12, by+30); tft.print("---");
     }
   }
-}
-
-// ─── Pause overlay ────────────────────────────────────────────────
-void showPauseOverlay() {
-  tft.fillRoundRect(80, 80, 160, 80, 10, C_UI_BG);
-  tft.drawRoundRect(80, 80, 160, 80, 10, C_UI_ACC);
-  tft.drawRoundRect(82, 82, 156, 76,  8, C_BOXON);
-  tft.setTextColor(C_UI_ACC); tft.setTextSize(3);
-  tft.setCursor(110, 100); tft.print("PAUSE");
-  tft.setTextColor(0x7BEF); tft.setTextSize(1);
-  tft.setCursor(95, 140); tft.print("Press START to resume");
 }
 
 // ─── EEPROM ───────────────────────────────────────────────────────
@@ -803,13 +788,6 @@ void setup() {
 void loop() {
 
   if (onTitleScreen) {
-    if (btnPressed(B_A)) {
-      onTitleScreen = false;
-      currentLevel  = 0;
-      loadLevel(currentLevel);
-      tft.fillScreen(C_FLOOR);
-      drawBoard(); drawHUD();
-    }
     if (btnPressed(B_SELECT)) {
       onTitleScreen      = false;
       onLevelSelect      = true;
@@ -862,25 +840,25 @@ void loop() {
     return;
   }
 
+  // Restart current level with START button
   if (btnPressed(B_START)) {
-    isPaused = !isPaused;
-    if (isPaused) {
-      showPauseOverlay();
-    } else {
-      tft.fillScreen(C_FLOOR);
-      drawBoard(); drawHUD();
-    }
-  }
-  if (isPaused) { delay(30); return; }
-
-  if (btnPressed(B_SELECT)) {
     loadLevel(currentLevel);
     tft.fillScreen(C_FLOOR);
     drawBoard(); drawHUD();
     return;
   }
 
-  if (btnPressed(B_B)) {
+  // Reset to menu with SELECT button
+  if (btnPressed(B_SELECT)) {
+    onTitleScreen = true;
+    onLevelSelect = false;
+    levelComplete = false;
+    showTitleScreen();
+    return;
+  }
+
+  // Undo with A button
+  if (btnPressed(B_A)) {
     doUndo();
     return;
   }
