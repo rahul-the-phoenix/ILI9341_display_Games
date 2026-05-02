@@ -1,448 +1,657 @@
+/*
+ * =============================================
+ *  TETRIS - ILI9341 / ESP32
+ * =============================================
+ *  BTN_UP     (13) = Rotate (CW)
+ *  BTN_LEFT   (27) = Move Left
+ *  BTN_RIGHT  (26) = Move Right
+ *  BTN_START  (32) = Pause / Resume
+ *  BTN_SELECT (25) = Title/Gameover: Start Game
+ *                    Playing: Hard Drop
+ *
+ *  AUTO-LOCK: piece নিচে ঠেকলে 500ms পরে
+ *  নিজে থেকেই lock হয়ে যাবে।
+ *  Move/Rotate করলে lock timer reset হবে।
+ *
+ *  User_Setup.h (TFT_eSPI):
+ *    #define ILI9341_DRIVER
+ *    #define TFT_CS   5
+ *    #define TFT_DC   21
+ *    #define TFT_RST  22
+ *    #define TFT_MOSI 23
+ *    #define TFT_SCLK 18
+ *    #define TFT_MISO 19
+ * =============================================
+ */
+
 #include <TFT_eSPI.h>
 #include <SPI.h>
+#include <EEPROM.h>
 
+// ── Pins ──────────────────────────────────────
+#define BTN_UP     13
+#define BTN_LEFT   27
+#define BTN_RIGHT  26
+#define BTN_START  32
+#define BTN_SELECT 25
+
+// ── Display ───────────────────────────────────
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite spr = TFT_eSprite(&tft);
-
-// ============= BUTTON PINS =============
-#define BTN_UP       13
-#define BTN_DOWN     12
-#define BTN_LEFT     27
-#define BTN_RIGHT    26
-#define BTN_A        14
-#define BTN_B        33
-#define BTN_START    32
-#define BTN_SELECT   25
-
-// ============= GAME SETTINGS =============
 #define SCREEN_W  320
 #define SCREEN_H  240
 
-// Optimized board size for 320x240 display
-#define FIELD_W   12   // Board width (12 blocks)
-#define FIELD_H   18   // Board height (18 blocks)
+// ── Board ─────────────────────────────────────
+#define BOARD_COLS  10
+#define BOARD_ROWS  20
+#define CELL        11
+#define BOARD_X     10
+#define BOARD_Y     10
+#define BOARD_W     (BOARD_COLS * CELL)
+#define BOARD_H     (BOARD_ROWS * CELL)
+#define PANEL_X     (BOARD_X + BOARD_W + 8)
+#define PANEL_Y     10
 
-// Block size calculation for optimal screen usage
-#define BLOCK_SIZE  13  // 13 pixels per block
-#define GAME_AREA_W  (FIELD_W * BLOCK_SIZE)   // 12*13 = 156 pixels
-#define GAME_AREA_H  (FIELD_H * BLOCK_SIZE)   // 18*13 = 234 pixels
+// ── Colors ────────────────────────────────────
+#define COL_BG     TFT_BLACK
+#define COL_BORDER 0x4208
+#define COL_GRID   0x2104
+#define COL_LABEL  0x7BEF
 
-// Layout Calculations - Left aligned with small margin
-#define OFFSET_X   8                    // Small left margin (8px)
-#define OFFSET_Y   ((SCREEN_H - GAME_AREA_H) / 2)  // (240-234)/2 = 3px vertical center
-
-// UI Panel Settings (Right Side - Now with more space)
-#define UI_X       (OFFSET_X + GAME_AREA_W + 8)    // 8 + 156 + 8 = 172
-#define UI_W       (SCREEN_W - UI_X - 5)           // 320 - 172 - 5 = 143 pixels (much better!)
-
-// Colors
-#define C_BLACK    0x0000
-#define C_WHITE    0xFFFF
-#define C_GRAY     0x528A
-#define C_DARKGRAY 0x2124
-#define C_BORDER   0xAD55
-#define C_CYAN     0x07FF
-#define C_BLUE     0x001F
-#define C_ORANGE   0xFD20
-#define C_YELLOW   0xFFE0
-#define C_GREEN    0x07E0
-#define C_PURPLE   0xF81F
-#define C_RED      0xF800
-
-const byte figures[7][4][4] = {
-  {{0,0,0,0}, {1,1,1,1}, {0,0,0,0}, {0,0,0,0}},  // I
-  {{1,0,0,0}, {1,1,1,0}, {0,0,0,0}, {0,0,0,0}},  // J
-  {{0,0,1,0}, {1,1,1,0}, {0,0,0,0}, {0,0,0,0}},  // L
-  {{1,1,0,0}, {1,1,0,0}, {0,0,0,0}, {0,0,0,0}},  // O
-  {{0,1,1,0}, {1,1,0,0}, {0,0,0,0}, {0,0,0,0}},  // S
-  {{0,1,0,0}, {1,1,1,0}, {0,0,0,0}, {0,0,0,0}},  // T
-  {{1,1,0,0}, {0,1,1,0}, {0,0,0,0}, {0,0,0,0}}   // Z
+const uint16_t PIECE_COLORS[9] = {
+  TFT_BLACK,   // 0 empty
+  0x07FF,      // 1 I  cyan
+  0xFFE0,      // 2 O  yellow
+  0xF81F,      // 3 T  magenta
+  0x07E0,      // 4 S  green
+  0xF800,      // 5 Z  red
+  0x001F,      // 6 J  blue
+  0xFC00,      // 7 L  orange
+  0x2104,      // 8 ghost
 };
 
-uint16_t colors[8] = {C_BLACK, C_CYAN, C_BLUE, C_ORANGE, C_YELLOW, C_GREEN, C_PURPLE, C_RED};
+// ── EEPROM ────────────────────────────────────
+#define EEPROM_SIZE   8
+#define HI_SCORE_ADDR 0
+#define HI_LINES_ADDR 4
 
-// Game Variables
-int field[FIELD_H][FIELD_W];
-int currentX, currentY;
-int currentType, currentRot;
-int nextType;
-unsigned long lastDropTime = 0;
-int dropInterval = 500;
-int score = 0;
-bool gameOver = false;
-bool isPaused = false;
+// ── Tetrominoes ───────────────────────────────
+const int8_t PIECES[8][4][4][2] = {
+  {{{0,0},{0,0},{0,0},{0,0}}}, // 0 unused
+  // 1-I
+  {{{1,0},{1,1},{1,2},{1,3}},{{0,2},{1,2},{2,2},{3,2}},
+   {{2,0},{2,1},{2,2},{2,3}},{{0,1},{1,1},{2,1},{3,1}}},
+  // 2-O
+  {{{0,1},{0,2},{1,1},{1,2}},{{0,1},{0,2},{1,1},{1,2}},
+   {{0,1},{0,2},{1,1},{1,2}},{{0,1},{0,2},{1,1},{1,2}}},
+  // 3-T
+  {{{0,1},{1,0},{1,1},{1,2}},{{0,1},{1,1},{1,2},{2,1}},
+   {{1,0},{1,1},{1,2},{2,1}},{{0,1},{1,0},{1,1},{2,1}}},
+  // 4-S
+  {{{0,1},{0,2},{1,0},{1,1}},{{0,1},{1,1},{1,2},{2,2}},
+   {{1,1},{1,2},{2,0},{2,1}},{{0,0},{1,0},{1,1},{2,1}}},
+  // 5-Z
+  {{{0,0},{0,1},{1,1},{1,2}},{{0,2},{1,1},{1,2},{2,1}},
+   {{1,0},{1,1},{2,1},{2,2}},{{0,1},{1,0},{1,1},{2,0}}},
+  // 6-J
+  {{{0,0},{1,0},{1,1},{1,2}},{{0,1},{0,2},{1,1},{2,1}},
+   {{1,0},{1,1},{1,2},{2,2}},{{0,1},{1,1},{2,0},{2,1}}},
+  // 7-L
+  {{{0,2},{1,0},{1,1},{1,2}},{{0,1},{1,1},{2,1},{2,2}},
+   {{1,0},{1,1},{1,2},{2,0}},{{0,0},{0,1},{1,1},{2,1}}},
+};
 
-unsigned long lastButtonTime = 0;
-const int buttonDelay = 120;
+// ── Game state ────────────────────────────────
+enum GameState { ST_TITLE, ST_PLAYING, ST_PAUSED, ST_GAMEOVER };
+GameState gameState;
 
+uint8_t  board[BOARD_ROWS][BOARD_COLS];
+
+int8_t   pieceType, pieceRot, pieceRow, pieceCol;
+int8_t   nextType;
+int8_t   ghostRow;
+
+uint32_t score, hiScore, hiLines;
+uint16_t lines;
+uint8_t  level;
+
+unsigned long dropTimer;
+unsigned long dropInterval;
+
+// Landing lock
+#define LOCK_DELAY    500   // ms after landing before auto-lock
+bool          landingMode;
+unsigned long landingTimer;
+
+// DAS
+#define DAS_DELAY     180
+#define DAS_INTERVAL  80
+unsigned long dasTimer;
+bool dasLeft, dasRight, dasActive;
+
+// Button prev states
+bool prevUp, prevLeft, prevRight, prevStart, prevSelect;
+
+// ── EEPROM ────────────────────────────────────
+void loadHiScores() {
+  EEPROM.begin(EEPROM_SIZE);
+  hiScore  = ((uint32_t)EEPROM.read(HI_SCORE_ADDR)   <<24)|
+             ((uint32_t)EEPROM.read(HI_SCORE_ADDR+1) <<16)|
+             ((uint32_t)EEPROM.read(HI_SCORE_ADDR+2) << 8)|
+              (uint32_t)EEPROM.read(HI_SCORE_ADDR+3);
+  hiLines  = ((uint32_t)EEPROM.read(HI_LINES_ADDR)   <<24)|
+             ((uint32_t)EEPROM.read(HI_LINES_ADDR+1) <<16)|
+             ((uint32_t)EEPROM.read(HI_LINES_ADDR+2) << 8)|
+              (uint32_t)EEPROM.read(HI_LINES_ADDR+3);
+  if (hiScore > 9999999) hiScore = 0;
+  if (hiLines > 9999)    hiLines = 0;
+}
+void saveHiScores() {
+  EEPROM.write(HI_SCORE_ADDR,   (hiScore>>24)&0xFF);
+  EEPROM.write(HI_SCORE_ADDR+1, (hiScore>>16)&0xFF);
+  EEPROM.write(HI_SCORE_ADDR+2, (hiScore>> 8)&0xFF);
+  EEPROM.write(HI_SCORE_ADDR+3,  hiScore     &0xFF);
+  EEPROM.write(HI_LINES_ADDR,   (hiLines>>24)&0xFF);
+  EEPROM.write(HI_LINES_ADDR+1, (hiLines>>16)&0xFF);
+  EEPROM.write(HI_LINES_ADDR+2, (hiLines>> 8)&0xFF);
+  EEPROM.write(HI_LINES_ADDR+3,  hiLines     &0xFF);
+  EEPROM.commit();
+}
+
+// ── Speed ─────────────────────────────────────
+unsigned long speedForLevel(uint8_t lv) {
+  const unsigned long s[] = {
+    800,720,630,550,470,380,300,215,143,100,
+     83, 83, 83, 67, 67, 67, 50, 50, 50, 33
+  };
+  return s[lv < 20 ? lv : 19];
+}
+
+// ── Piece helpers ─────────────────────────────
+int8_t rndPiece() { return (int8_t)random(1,8); }
+
+void getCells(int8_t type,int8_t rot,int8_t row,int8_t col,
+              int8_t r[4],int8_t c[4]) {
+  for (int i=0;i<4;i++) {
+    r[i]=row+PIECES[type][rot][i][0];
+    c[i]=col+PIECES[type][rot][i][1];
+  }
+}
+
+bool isValid(int8_t type,int8_t rot,int8_t row,int8_t col) {
+  int8_t r[4],c[4]; getCells(type,rot,row,col,r,c);
+  for (int i=0;i<4;i++) {
+    if (c[i]<0||c[i]>=BOARD_COLS) return false;
+    if (r[i]>=BOARD_ROWS)          return false;
+    if (r[i]>=0&&board[r[i]][c[i]]) return false;
+  }
+  return true;
+}
+
+int8_t calcGhost() {
+  int8_t g=pieceRow;
+  while (isValid(pieceType,pieceRot,g+1,pieceCol)) g++;
+  return g;
+}
+
+// ── Draw ──────────────────────────────────────
+void drawCell(int sx,int sy,uint16_t color,bool ghost=false) {
+  if (ghost) {
+    tft.drawRect(sx,sy,CELL,CELL,color);
+    tft.drawRect(sx+1,sy+1,CELL-2,CELL-2,color);
+  } else {
+    tft.fillRect(sx,sy,CELL,CELL,color);
+    tft.drawFastHLine(sx,sy,CELL,0xFFFF);
+    tft.drawFastVLine(sx,sy,CELL,0xFFFF);
+    uint16_t dk=((color>>11&0x1F)>>1)<<11|((color>>5&0x3F)>>1)<<5|((color&0x1F)>>1);
+    tft.drawFastHLine(sx,sy+CELL-1,CELL,dk);
+    tft.drawFastVLine(sx+CELL-1,sy,CELL,dk);
+  }
+}
+
+void drawBoardCell(int row,int col) {
+  int sx=BOARD_X+col*CELL, sy=BOARD_Y+row*CELL;
+  if (!board[row][col]) {
+    tft.fillRect(sx,sy,CELL,CELL,COL_BG);
+    tft.drawPixel(sx,sy,COL_GRID);
+  } else drawCell(sx,sy,PIECE_COLORS[board[row][col]]);
+}
+
+void drawBoard() {
+  for (int r=0;r<BOARD_ROWS;r++)
+    for (int c=0;c<BOARD_COLS;c++) drawBoardCell(r,c);
+}
+
+void drawBorder() {
+  tft.drawRect(BOARD_X-1,BOARD_Y-1,BOARD_W+2,BOARD_H+2,COL_BORDER);
+  tft.drawRect(BOARD_X-2,BOARD_Y-2,BOARD_W+4,BOARD_H+4,COL_BORDER);
+}
+
+void restoreBoardUnder(int8_t type,int8_t rot,int8_t row,int8_t col) {
+  int8_t r[4],c[4]; getCells(type,rot,row,col,r,c);
+  for (int i=0;i<4;i++)
+    if (r[i]>=0&&r[i]<BOARD_ROWS&&c[i]>=0&&c[i]<BOARD_COLS&&board[r[i]][c[i]])
+      drawBoardCell(r[i],c[i]);
+}
+
+void erasePiece(int8_t type,int8_t rot,int8_t row,int8_t col) {
+  int8_t r[4],c[4]; getCells(type,rot,row,col,r,c);
+  for (int i=0;i<4;i++) {
+    if (r[i]<0||r[i]>=BOARD_ROWS||c[i]<0||c[i]>=BOARD_COLS) continue;
+    if (board[r[i]][c[i]]) continue;
+    int sx=BOARD_X+c[i]*CELL, sy=BOARD_Y+r[i]*CELL;
+    tft.fillRect(sx,sy,CELL,CELL,COL_BG);
+    tft.drawPixel(sx,sy,COL_GRID);
+  }
+}
+
+void drawPiece(int8_t type,int8_t rot,int8_t row,int8_t col,bool ghost=false) {
+  int8_t r[4],c[4]; getCells(type,rot,row,col,r,c);
+  for (int i=0;i<4;i++) {
+    if (r[i]<0||r[i]>=BOARD_ROWS||c[i]<0||c[i]>=BOARD_COLS) continue;
+    drawCell(BOARD_X+c[i]*CELL,BOARD_Y+r[i]*CELL,
+             ghost?PIECE_COLORS[8]:PIECE_COLORS[type],ghost);
+  }
+}
+
+// ── Panel ─────────────────────────────────────
+void panelLabel(const char* s,int y) {
+  tft.setTextColor(COL_LABEL);tft.setTextSize(1);
+  tft.setCursor(PANEL_X,y);tft.print(s);
+}
+void panelValue(uint32_t v,int y,uint16_t col=TFT_WHITE) {
+  tft.fillRect(PANEL_X,y,105,10,COL_BG);
+  tft.setTextColor(col);tft.setTextSize(1);
+  tft.setCursor(PANEL_X,y);tft.print(v);
+}
+
+void drawNextPiece() {
+  int nx=PANEL_X,ny=PANEL_Y+20;
+  tft.fillRect(nx,ny,52,52,COL_BG);
+  tft.drawRect(nx-1,ny-1,54,54,COL_BORDER);
+  for (int i=0;i<4;i++) {
+    int8_t pr=PIECES[nextType][0][i][0];
+    int8_t pc=PIECES[nextType][0][i][1];
+    drawCell(nx+pc*12+2,ny+pr*12+2,PIECE_COLORS[nextType]);
+  }
+}
+
+void drawPanel() {
+  panelLabel("NEXT",  PANEL_Y+10);  drawNextPiece();
+  panelLabel("SCORE", PANEL_Y+82);  panelValue(score,   PANEL_Y+92,  TFT_YELLOW);
+  panelLabel("BEST",  PANEL_Y+108); panelValue(hiScore, PANEL_Y+118, 0x07FF);
+  panelLabel("LINES", PANEL_Y+134); panelValue(lines,   PANEL_Y+144, TFT_GREEN);
+  panelLabel("LEVEL", PANEL_Y+160); panelValue(level,   PANEL_Y+170, TFT_MAGENTA);
+  tft.setTextColor(0x4208);tft.setTextSize(1);
+  tft.setCursor(PANEL_X,PANEL_Y+192);tft.print("UP :Rotate");
+  tft.setCursor(PANEL_X,PANEL_Y+203);tft.print("SEL:HardDrop");
+  tft.setCursor(PANEL_X,PANEL_Y+214);tft.print("STA:Pause");
+}
+
+// ── Scoring ───────────────────────────────────
+void addScore(int cleared) {
+  const uint16_t pts[]={0,100,300,500,800};
+  score+=(uint32_t)pts[cleared]*(level+1);
+  lines+=cleared;
+  level=lines/10; if (level>19) level=19;
+  dropInterval=speedForLevel(level);
+}
+
+void checkLines() {
+  uint8_t cnt=0, fullR[4];
+  for (int r=BOARD_ROWS-1;r>=0;r--) {
+    bool full=true;
+    for (int c=0;c<BOARD_COLS;c++) if (!board[r][c]){full=false;break;}
+    if (full) fullR[cnt++]=r;
+  }
+  if (!cnt) return;
+  // Flash
+  for (int f=0;f<4;f++) {
+    uint16_t fc=(f%2==0)?TFT_WHITE:COL_BG;
+    for (int i=0;i<cnt;i++) tft.fillRect(BOARD_X,BOARD_Y+fullR[i]*CELL,BOARD_W,CELL,fc);
+    delay(55);
+  }
+  // Sort ascending
+  for (int a=0;a<cnt-1;a++)
+    for (int b=a+1;b<cnt;b++)
+      if (fullR[a]>fullR[b]){uint8_t t=fullR[a];fullR[a]=fullR[b];fullR[b]=t;}
+  // Remove
+  for (int i=0;i<cnt;i++) {
+    int row=fullR[i]-i;
+    for (int r=row;r>0;r--)
+      for (int c=0;c<BOARD_COLS;c++) board[r][c]=board[r-1][c];
+    for (int c=0;c<BOARD_COLS;c++) board[0][c]=0;
+  }
+  addScore(cnt);
+  drawBoard();
+  panelValue(score,  PANEL_Y+92,  TFT_YELLOW);
+  panelValue(lines,  PANEL_Y+144, TFT_GREEN);
+  panelValue(level,  PANEL_Y+170, TFT_MAGENTA);
+}
+
+// ── Lock ──────────────────────────────────────
+bool lockPiece() {
+  int8_t r[4],c[4];
+  getCells(pieceType,pieceRot,pieceRow,pieceCol,r,c);
+  for (int i=0;i<4;i++) {
+    if (r[i]<0) return false;        // above board = game over
+    board[r[i]][c[i]]=pieceType;
+  }
+  for (int i=0;i<4;i++)
+    if (r[i]>=0&&r[i]<BOARD_ROWS) drawBoardCell(r[i],c[i]);
+  checkLines();
+  return true;
+}
+
+// ── Spawn ─────────────────────────────────────
+bool spawnPiece() {
+  pieceType=nextType; nextType=rndPiece();
+  pieceRot=0; pieceRow=-1;
+  pieceCol=BOARD_COLS/2-2;
+  if (!isValid(pieceType,pieceRot,pieceRow,pieceCol)) return false;
+  ghostRow=calcGhost();
+  drawPiece(pieceType,pieceRot,ghostRow,pieceCol,true);
+  drawPiece(pieceType,pieceRot,pieceRow,pieceCol);
+  drawNextPiece();
+  landingMode=false; landingTimer=0;
+  return true;
+}
+
+// ── Game over ─────────────────────────────────
+void triggerGameOver() {
+  if (score>hiScore) hiScore=score;
+  if (lines>hiLines) hiLines=lines;
+  saveHiScores();
+  gameState=ST_GAMEOVER;
+
+  tft.fillRect(22,82,215,80,0x0821);
+  tft.drawRect(22,82,215,80,TFT_RED);
+  tft.setTextColor(TFT_RED);tft.setTextSize(2);
+  tft.setCursor(50,90);tft.print("GAME OVER");
+  tft.setTextSize(1);tft.setTextColor(TFT_WHITE);
+  tft.setCursor(35,114);tft.print("Score : ");tft.print(score);
+  tft.setCursor(35,128);tft.print("Lines : ");tft.print(lines);
+  if (score>=hiScore||lines>=hiLines) {
+    tft.setTextColor(TFT_YELLOW);
+    tft.setCursor(52,142);tft.print("** NEW RECORD! **");
+  } else {
+    tft.setTextColor(0x7BEF);
+    tft.setCursor(35,142);tft.print("Best  : ");tft.print(hiScore);
+  }
+  tft.setTextColor(TFT_GREEN);
+  tft.setCursor(38,154);tft.print("SELECT to play again");
+}
+
+// ── Hard drop ─────────────────────────────────
+void doHardDrop() {
+  erasePiece(pieceType,pieceRot,ghostRow,pieceCol);
+  erasePiece(pieceType,pieceRot,pieceRow,pieceCol);
+  restoreBoardUnder(pieceType,pieceRot,pieceRow,pieceCol);
+  int dropped=0;
+  while (isValid(pieceType,pieceRot,pieceRow+1,pieceCol)) {pieceRow++;dropped++;}
+  score+=dropped*2;
+  panelValue(score,PANEL_Y+92,TFT_YELLOW);
+  if (!lockPiece())  { triggerGameOver(); return; }
+  if (!spawnPiece()) { triggerGameOver(); return; }
+  dropTimer=millis();
+}
+
+// ── Rotate ────────────────────────────────────
+void doRotate() {
+  int8_t newRot=(pieceRot+1)%4;
+  int8_t kicks[]={0,-1,1,-2,2};
+  for (int k=0;k<5;k++) {
+    int8_t nc=pieceCol+kicks[k];
+    if (isValid(pieceType,newRot,pieceRow,nc)) {
+      erasePiece(pieceType,pieceRot,ghostRow,pieceCol);
+      erasePiece(pieceType,pieceRot,pieceRow,pieceCol);
+      restoreBoardUnder(pieceType,pieceRot,pieceRow,pieceCol);
+      pieceRot=newRot; pieceCol=nc;
+      ghostRow=calcGhost();
+      drawPiece(pieceType,pieceRot,ghostRow,pieceCol,true);
+      drawPiece(pieceType,pieceRot,pieceRow,pieceCol);
+      if (landingMode) landingTimer=millis(); // reset lock delay
+      return;
+    }
+  }
+}
+
+// ── Move left/right ───────────────────────────
+void doMove(int dc) {
+  if (!isValid(pieceType,pieceRot,pieceRow,pieceCol+dc)) return;
+  erasePiece(pieceType,pieceRot,ghostRow,pieceCol);
+  erasePiece(pieceType,pieceRot,pieceRow,pieceCol);
+  restoreBoardUnder(pieceType,pieceRot,pieceRow,pieceCol);
+  pieceCol+=dc;
+  ghostRow=calcGhost();
+  drawPiece(pieceType,pieceRot,ghostRow,pieceCol,true);
+  drawPiece(pieceType,pieceRot,pieceRow,pieceCol);
+  if (landingMode) landingTimer=millis(); // reset lock delay
+}
+
+// ── Auto drop one row ─────────────────────────
+// Returns false if locked and spawn failed (game over)
+bool doAutoDrop() {
+  if (isValid(pieceType,pieceRot,pieceRow+1,pieceCol)) {
+    erasePiece(pieceType,pieceRot,ghostRow,pieceCol);
+    erasePiece(pieceType,pieceRot,pieceRow,pieceCol);
+    restoreBoardUnder(pieceType,pieceRot,pieceRow,pieceCol);
+    pieceRow++;
+    ghostRow=calcGhost();
+    drawPiece(pieceType,pieceRot,ghostRow,pieceCol,true);
+    drawPiece(pieceType,pieceRot,pieceRow,pieceCol);
+    return true;
+  }
+  // Can't drop — lock
+  erasePiece(pieceType,pieceRot,ghostRow,pieceCol);
+  if (!lockPiece())  { triggerGameOver(); return false; }
+  if (!spawnPiece()) { triggerGameOver(); return false; }
+  dropTimer=millis();
+  return true;
+}
+
+// ── Title screen ──────────────────────────────
+void drawTitle() {
+  tft.fillScreen(COL_BG);
+  for (int y=0;y<SCREEN_H;y+=3)
+    tft.drawFastHLine(0,y,SCREEN_W,0x0821);
+
+  tft.setTextSize(4);tft.setTextColor(0x07FF);
+  tft.setCursor(42,28);tft.print("TETRIS");
+
+  tft.setTextSize(1);tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(72,76);tft.print("ESP32 + ILI9341 Edition");
+
+  uint16_t deco[]={0x07FF,0xFFE0,0xF81F,0x07E0,0xF800,0x001F,0xFC00};
+  for (int i=0;i<7;i++) tft.fillRect(70+i*26,88,24,10,deco[i]);
+
+  tft.setTextColor(COL_LABEL);
+  tft.setCursor(60,112);tft.print("BEST SCORE : ");
+  tft.setTextColor(TFT_YELLOW);tft.print(hiScore);
+  tft.setTextColor(COL_LABEL);
+  tft.setCursor(60,126);tft.print("BEST LINES : ");
+  tft.setTextColor(TFT_GREEN);tft.print(hiLines);
+
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(55,148);tft.print("LEFT / RIGHT  :  Move");
+  tft.setCursor(55,162);tft.print("UP            :  Rotate");
+  tft.setCursor(55,176);tft.print("SELECT        :  Hard Drop");
+  tft.setCursor(55,190);tft.print("START         :  Pause");
+
+  // prompt (blinking handled in loop)
+  tft.setTextColor(TFT_CYAN);
+  tft.setCursor(62,SCREEN_H-14);
+  tft.print("Press SELECT to Start!");
+}
+
+// ── Pause overlay ─────────────────────────────
+void drawPaused() {
+  tft.fillRect(25,98,175,46,0x0821);
+  tft.drawRect(25,98,175,46,TFT_YELLOW);
+  tft.setTextColor(TFT_YELLOW);tft.setTextSize(2);
+  tft.setCursor(43,106);tft.print("** PAUSED **");
+  tft.setTextSize(1);tft.setTextColor(TFT_WHITE);
+  tft.setCursor(43,126);tft.print("START to continue");
+}
+void erasePaused() {
+  for (int r=9;r<=13&&r<BOARD_ROWS;r++)
+    for (int c=0;c<BOARD_COLS;c++) drawBoardCell(r,c);
+  // Also redraw ghost + piece
+  drawPiece(pieceType,pieceRot,ghostRow,pieceCol,true);
+  drawPiece(pieceType,pieceRot,pieceRow,pieceCol);
+}
+
+// ── Init game ─────────────────────────────────
+void initGame() {
+  memset(board,0,sizeof(board));
+  score=0;lines=0;level=0;
+  dropInterval=speedForLevel(0);
+  dropTimer=millis();
+  landingMode=false;
+  dasLeft=dasRight=dasActive=false;
+  nextType=rndPiece();
+  tft.fillScreen(COL_BG);
+  drawBorder();drawBoard();drawPanel();
+  spawnPiece();
+  gameState=ST_PLAYING;
+}
+
+// ── Setup ─────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-
-  pinMode(BTN_UP, INPUT_PULLUP);
-  pinMode(BTN_DOWN, INPUT_PULLUP);
-  pinMode(BTN_LEFT, INPUT_PULLUP);
+  pinMode(BTN_UP,    INPUT_PULLUP);
+  pinMode(BTN_LEFT,  INPUT_PULLUP);
   pinMode(BTN_RIGHT, INPUT_PULLUP);
-  pinMode(BTN_A, INPUT_PULLUP);
-  pinMode(BTN_B, INPUT_PULLUP);
   pinMode(BTN_START, INPUT_PULLUP);
-  pinMode(BTN_SELECT, INPUT_PULLUP);
+  pinMode(BTN_SELECT,INPUT_PULLUP);
+
+  randomSeed(analogRead(0)^analogRead(1)^millis());
 
   tft.init();
   tft.setRotation(1);
-  
-  spr.setColorDepth(8);
-  spr.createSprite(SCREEN_W, SCREEN_H);
+  tft.fillScreen(COL_BG);
 
-  randomSeed(analogRead(34));
-  drawStartScreen();
-  
-  while(digitalRead(BTN_SELECT) == HIGH) {
-    delay(10);
-  }
-  delay(300);
-  resetGame();
+  loadHiScores();
+  prevUp=prevLeft=prevRight=prevStart=prevSelect=HIGH;
+
+  gameState=ST_TITLE;
+  drawTitle();
 }
 
-void drawStartScreen() {
-  spr.fillSprite(C_BLACK);
-  spr.setTextColor(C_YELLOW, C_BLACK);
-  spr.setTextDatum(MC_DATUM);
-  spr.drawString("TETRIS", SCREEN_W / 2, 40, 4);
-  
-  spr.setTextColor(C_WHITE, C_BLACK);
-  spr.setTextSize(1);
-  spr.drawString("Controls:", SCREEN_W / 2 - 110, 80, 2);
-  spr.drawString("LEFT/RIGHT: Move", SCREEN_W / 2 - 110, 105, 1);
-  spr.drawString("UP: Rotate", SCREEN_W / 2 - 110, 125, 1);
-  spr.drawString("DOWN: Soft Drop", SCREEN_W / 2 - 110, 145, 1);
-  spr.drawString("A: Change Shape", SCREEN_W / 2 - 110, 165, 1);
-  spr.drawString("SELECT: Hard Drop", SCREEN_W / 2 - 110, 185, 1);
-  spr.drawString("START: Pause", SCREEN_W / 2 - 110, 205, 1);
-  
-  spr.setTextColor(C_GREEN, C_BLACK);
-  spr.drawString("PRESS START", SCREEN_W / 2, 235, 2);
-  
-  spr.pushSprite(0, 0);
-}
-
+// ── Loop ──────────────────────────────────────
 void loop() {
-  if (!gameOver) {
-    if (!isPaused) {
-      handleInput();
-      
-      if (millis() - lastDropTime > dropInterval) {
-        if (!move(0, 1)) {
-          lockPiece();
-          clearLines();
-          spawnPiece();
-          
-          if (checkCollision(currentX, currentY, currentRot)) {
-            gameOver = true;
-          }
-        }
-        lastDropTime = millis();
+  unsigned long now=millis();
+
+  bool curUp    =digitalRead(BTN_UP);
+  bool curLeft  =digitalRead(BTN_LEFT);
+  bool curRight =digitalRead(BTN_RIGHT);
+  bool curStart =digitalRead(BTN_START);
+  bool curSelect=digitalRead(BTN_SELECT);
+
+  // ===== TITLE =====
+  if (gameState==ST_TITLE) {
+    static bool blinkOn=true;
+    static unsigned long blinkT=0;
+    if (now-blinkT>550) {
+      blinkT=now;blinkOn=!blinkOn;
+      tft.setTextColor(blinkOn?TFT_CYAN:COL_BG);
+      tft.setTextSize(1);
+      tft.setCursor(62,SCREEN_H-14);
+      tft.print("Press SELECT to Start!");
+    }
+    if (prevSelect==HIGH&&curSelect==LOW) initGame();
+  }
+
+  // ===== GAME OVER =====
+  else if (gameState==ST_GAMEOVER) {
+    if (prevSelect==HIGH&&curSelect==LOW) {
+      gameState=ST_TITLE; drawTitle();
+    }
+  }
+
+  // ===== PAUSED =====
+  else if (gameState==ST_PAUSED) {
+    if (prevStart==HIGH&&curStart==LOW) {
+      erasePaused();
+      gameState=ST_PLAYING;
+      dropTimer=millis();
+      if (landingMode) landingTimer=millis();
+    }
+  }
+
+  // ===== PLAYING =====
+  else if (gameState==ST_PLAYING) {
+
+    // START → pause
+    if (prevStart==HIGH&&curStart==LOW) {
+      gameState=ST_PAUSED; drawPaused();
+      goto done;
+    }
+
+    // UP → rotate
+    if (prevUp==HIGH&&curUp==LOW) doRotate();
+
+    // SELECT → hard drop
+    if (prevSelect==HIGH&&curSelect==LOW) {
+      doHardDrop();
+      goto done;
+    }
+
+    // LEFT with DAS
+    if (prevLeft==HIGH&&curLeft==LOW) {
+      doMove(-1);
+      dasLeft=true; dasRight=false; dasActive=false; dasTimer=now;
+    }
+    if (curLeft==LOW&&dasLeft) {
+      if (!dasActive&&now-dasTimer>DAS_DELAY){dasActive=true;dasTimer=now;}
+      if (dasActive&&now-dasTimer>DAS_INTERVAL){doMove(-1);dasTimer=now;}
+    }
+    if (curLeft==HIGH){dasLeft=false;dasActive=false;}
+
+    // RIGHT with DAS
+    if (prevRight==HIGH&&curRight==LOW) {
+      doMove(1);
+      dasRight=true;dasLeft=false;dasActive=false;dasTimer=now;
+    }
+    if (curRight==LOW&&dasRight) {
+      if (!dasActive&&now-dasTimer>DAS_DELAY){dasActive=true;dasTimer=now;}
+      if (dasActive&&now-dasTimer>DAS_INTERVAL){doMove(1);dasTimer=now;}
+    }
+    if (curRight==HIGH){dasRight=false;dasActive=false;}
+
+    // ── Landing lock logic ──────────────────
+    bool canFall=isValid(pieceType,pieceRot,pieceRow+1,pieceCol);
+
+    if (canFall) {
+      // Piece can still fall — disable landing mode
+      landingMode=false;
+      // Auto drop at current speed
+      if (now-dropTimer>=dropInterval) {
+        doAutoDrop();
+        dropTimer=now;
       }
-      
-      drawGame();
     } else {
-      drawPauseScreen();
-      if (digitalRead(BTN_SELECT) == LOW) {
-        isPaused = false;
-        lastDropTime = millis();
-        delay(300);
+      // Piece is resting on something
+      if (!landingMode) {
+        // Just landed — start lock delay
+        landingMode=true;
+        landingTimer=now;
       }
-    }
-  } else {
-    drawGameOver();
-    if (digitalRead(BTN_SELECT) == LOW) {
-      resetGame();
-      delay(300);
-    }
-  }
-}
-
-void handleInput() {
-  if (millis() - lastButtonTime < buttonDelay) return;
-
-  if (digitalRead(BTN_SELECT) == LOW) {
-    isPaused = !isPaused;
-    lastButtonTime = millis();
-    return;
-  }
-
-  if (isPaused) return;
-
-  if (digitalRead(BTN_LEFT) == LOW) {
-    move(-1, 0);
-    lastButtonTime = millis();
-  }
-  else if (digitalRead(BTN_RIGHT) == LOW) {
-    move(1, 0);
-    lastButtonTime = millis();
-  }
-  else if (digitalRead(BTN_UP) == LOW) {
-    rotate();
-    lastButtonTime = millis();
-  }
-  // else if (digitalRead(BTN_DOWN) == LOW) {
-  //   if (move(0, 1)) {
-  //     lastDropTime = millis();
-  //   }
-  //   lastButtonTime = millis();
-  // }
-  else if (digitalRead(BTN_DOWN) == LOW) {
-    // Hard drop
-    while (move(0, 1)) {}
-    lockPiece();
-    clearLines();
-    spawnPiece();
-    lastDropTime = millis();
-    lastButtonTime = millis();
-  }
-  // else if (digitalRead(BTN_A) == LOW) {
-  //   // Change current shape (cheat/debug feature)
-  //   int newType = random(0, 7);
-  //   if (!checkCollision(currentX, currentY, currentRot)) {
-  //     currentType = newType;
-  //   }
-  //   lastButtonTime = millis();
-  // }
-}
-
-bool move(int dx, int dy) {
-  if (!checkCollision(currentX + dx, currentY + dy, currentRot)) {
-    currentX += dx;
-    currentY += dy;
-    return true;
-  }
-  return false;
-}
-
-void rotate() {
-  int nextRot = (currentRot + 1) % 4;
-  if (!checkCollision(currentX, currentY, nextRot)) {
-    currentRot = nextRot;
-  }
-}
-
-bool checkCollision(int x, int y, int rot) {
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4; j++) {
-      if (getBlock(currentType, rot, j, i)) {
-        int fieldX = x + j;
-        int fieldY = y + i;
-
-        if (fieldX < 0 || fieldX >= FIELD_W) return true;
-        if (fieldY >= FIELD_H) return true;
-        if (fieldY >= 0 && field[fieldY][fieldX] != 0) return true;
-      }
-    }
-  }
-  return false;
-}
-
-int getBlock(int type, int rot, int x, int y) {
-  switch (rot) {
-    case 0: return figures[type][y][x];
-    case 1: return figures[type][3-x][y];
-    case 2: return figures[type][3-y][3-x];
-    case 3: return figures[type][x][3-y];
-  }
-  return 0;
-}
-
-void lockPiece() {
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4; j++) {
-      if (getBlock(currentType, currentRot, j, i)) {
-        int fieldX = currentX + j;
-        int fieldY = currentY + i;
-        if (fieldY >= 0 && fieldY < FIELD_H && fieldX >= 0 && fieldX < FIELD_W) {
-          field[fieldY][fieldX] = currentType + 1;
-        }
-      }
-    }
-  }
-}
-
-void clearLines() {
-  int linesCleared = 0;
-  
-  for (int y = FIELD_H - 1; y >= 0; y--) {
-    bool full = true;
-    for (int x = 0; x < FIELD_W; x++) {
-      if (field[y][x] == 0) {
-        full = false;
-        break;
-      }
-    }
-    
-    if (full) {
-      for (int k = y; k > 0; k--) {
-        for (int x = 0; x < FIELD_W; x++) {
-          field[k][x] = field[k-1][x];
-        }
-      }
-      for (int x = 0; x < FIELD_W; x++) field[0][x] = 0;
-      
-      y++;
-      linesCleared++;
-    }
-  }
-
-  if (linesCleared > 0) {
-    // Score system: 100, 300, 500, 800 for 1,2,3,4 lines
-    int points[] = {0, 100, 300, 500, 800};
-    score += points[linesCleared];
-    dropInterval = max(100, 500 - (score / 400) * 25);
-  }
-}
-
-void spawnPiece() {
-  currentType = nextType;
-  nextType = random(0, 7);
-  currentRot = 0;
-  currentX = FIELD_W / 2 - 2;  // Center of board
-  currentY = 0;
-}
-
-void resetGame() {
-  for (int y = 0; y < FIELD_H; y++) {
-    for (int x = 0; x < FIELD_W; x++) {
-      field[y][x] = 0;
-    }
-  }
-  score = 0;
-  dropInterval = 500;
-  gameOver = false;
-  isPaused = false;
-  
-  nextType = random(0, 7);
-  spawnPiece();
-  lastDropTime = millis();
-}
-
-void drawGame() {
-  spr.fillSprite(C_BLACK);
-  
-  // ========== RIGHT PANEL UI ==========
-  spr.fillRect(UI_X, 0, UI_W, SCREEN_H, C_DARKGRAY);
-  spr.drawRect(UI_X, 0, UI_W, SCREEN_H, C_GRAY);
-  
-  // Next piece label
-  spr.setTextColor(C_WHITE, C_DARKGRAY);
-  spr.setTextDatum(MC_DATUM);
-  spr.setTextSize(1);
-  spr.drawString("NEXT", UI_X + UI_W/2, 25, 2);
-  
-  // Next piece box - bigger now
-  int boxSize = min(UI_W - 20, 100);
-  int boxX = UI_X + (UI_W - boxSize)/2;
-  int boxY = 45;
-  spr.drawRect(boxX, boxY, boxSize, boxSize, C_WHITE);
-  
-  // Draw next piece centered
-  int blockSizeUI = boxSize / 4;
-  int startX = boxX + (boxSize - (4 * blockSizeUI))/2;
-  int startY = boxY + (boxSize - (4 * blockSizeUI))/2;
-  
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4; j++) {
-      if (figures[nextType][i][j]) {
-        spr.fillRect(startX + j * blockSizeUI, startY + i * blockSizeUI, 
-                     blockSizeUI - 1, blockSizeUI - 1, colors[nextType + 1]);
-        spr.drawRect(startX + j * blockSizeUI, startY + i * blockSizeUI, 
-                     blockSizeUI - 1, blockSizeUI - 1, C_WHITE);
-      }
-    }
-  }
-  
-  // Score section
-  spr.setTextFont(2);
-  spr.drawString("SCORE", UI_X + UI_W/2, boxY + boxSize + 20, 2);
-  spr.setTextFont(4);
-  spr.setTextSize(1);
-  char scoreStr[10];
-  sprintf(scoreStr, "%d", score);
-  spr.drawString(scoreStr, UI_X + UI_W/2, boxY + boxSize + 50);
-  spr.setTextFont(1);
-  
-  // Level display
-  // int level = (500 - dropInterval) / 25;
-  // spr.setTextFont(2);
-  // spr.drawString("LEVEL", UI_X + UI_W/2, boxY + boxSize + 90, 2);
-  // spr.setTextFont(4);
-  // char levelStr[5];
-  // sprintf(levelStr, "%d", level);
-  // spr.drawString(levelStr, UI_X + UI_W/2, boxY + boxSize + 115);
-  // spr.setTextFont(1);
-  
-  // // Game Title at bottom
-  // spr.setTextColor(C_GRAY, C_DARKGRAY);
-  // spr.drawString("TETRIS", UI_X + UI_W/2, SCREEN_H - 20, 1);
-  
-  // ========== GAME AREA ==========
-  // Game border
-  spr.drawRect(OFFSET_X - 2, OFFSET_Y - 2, GAME_AREA_W + 4, GAME_AREA_H + 4, C_BORDER);
-  spr.drawRect(OFFSET_X - 1, OFFSET_Y - 1, GAME_AREA_W + 2, GAME_AREA_H + 2, C_GRAY);
-  
-  // Draw field (locked pieces)
-  for (int y = 0; y < FIELD_H; y++) {
-    for (int x = 0; x < FIELD_W; x++) {
-      if (field[y][x] != 0) {
-        drawBlock(OFFSET_X + x * BLOCK_SIZE, OFFSET_Y + y * BLOCK_SIZE, colors[field[y][x]]);
-      }
-    }
-  }
-  
-  // Draw current piece
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4; j++) {
-      if (getBlock(currentType, currentRot, j, i)) {
-        int drawX = OFFSET_X + (currentX + j) * BLOCK_SIZE;
-        int drawY = OFFSET_Y + (currentY + i) * BLOCK_SIZE;
-        
-        if (drawY + BLOCK_SIZE > OFFSET_Y && drawY < OFFSET_Y + GAME_AREA_H) {
-          drawBlock(drawX, drawY, colors[currentType + 1]);
-        }
+      // After LOCK_DELAY ms without move/rotate → auto lock
+      if (now-landingTimer>=LOCK_DELAY) {
+        landingMode=false;
+        erasePiece(pieceType,pieceRot,ghostRow,pieceCol);
+        if (!lockPiece())  { triggerGameOver(); goto done; }
+        if (!spawnPiece()) { triggerGameOver(); goto done; }
+        dropTimer=millis();
       }
     }
   }
 
-  spr.pushSprite(0, 0);
-}
-
-void drawBlock(int x, int y, uint16_t color) {
-  spr.fillRect(x, y, BLOCK_SIZE - 1, BLOCK_SIZE - 1, color);
-  spr.drawRect(x, y, BLOCK_SIZE - 1, BLOCK_SIZE - 1, C_WHITE);
-  // Add 3D effect for better visibility
-  if (BLOCK_SIZE > 4) {
-    spr.drawLine(x + 1, y + 1, x + BLOCK_SIZE - 3, y + 1, 0xFFFF);
-    spr.drawLine(x + 1, y + 1, x + 1, y + BLOCK_SIZE - 3, 0xFFFF);
-  }
-}
-
-void drawPauseScreen() {
-  spr.fillSprite(C_BLACK);
-  spr.setTextColor(C_YELLOW, C_BLACK);
-  spr.setTextDatum(MC_DATUM);
-  spr.drawString("PAUSED", SCREEN_W / 2, SCREEN_H / 2 - 20, 4);
-  spr.setTextColor(C_WHITE, C_BLACK);
-  spr.drawString("Press START to Resume", SCREEN_W / 2, SCREEN_H / 2 + 30, 2);
-  spr.pushSprite(0, 0);
-}
-
-void drawGameOver() {
-  spr.fillSprite(C_BLACK);
-  spr.setTextColor(C_RED, C_BLACK);
-  spr.setTextDatum(MC_DATUM);
-  spr.drawString("GAME OVER", SCREEN_W / 2, SCREEN_H / 2 - 40, 4);
-  spr.setTextColor(C_WHITE, C_BLACK);
-  spr.drawString("Final Score", SCREEN_W / 2, SCREEN_H / 2, 2);
-  spr.setTextFont(4);
-  spr.drawString(String(score), SCREEN_W / 2, SCREEN_H / 2 + 30);
-  spr.setTextFont(1);
-  spr.setTextColor(C_GREEN, C_BLACK);
-  spr.drawString("Press START to Restart", SCREEN_W / 2, SCREEN_H - 30, 2);
-  spr.pushSprite(0, 0);
+done:
+  prevUp    =curUp;
+  prevLeft  =curLeft;
+  prevRight =curRight;
+  prevStart =curStart;
+  prevSelect=curSelect;
+  delay(8);
 }
