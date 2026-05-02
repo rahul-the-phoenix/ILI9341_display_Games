@@ -27,12 +27,13 @@ enum GameMode {
   GAME_PONG,
   GAME_SPERMRACE,
   GAME_CARRACING,
-  GAME_RTEX_SUBMENU,   // NEW: RTEX LITE submenu
-  GAME_RTEX            // NEW: RTEX game running
+  GAME_RTEX_SUBMENU,
+  GAME_RTEX,
+  GAME_BRICKBREAKER   // NEW: Brick Breaker
 };
 
 GameMode currentGame = GAME_MENU;
-int selectedGame     = 0;   // 0..9
+int selectedGame     = 0;   // 0..10 (now 11 games)
 
 int screenWidth  = 320;
 int screenHeight = 240;
@@ -42,13 +43,13 @@ int flappySubSelected = 0;
 int flappyVersion     = 0;
 
 // ============= RTEX SUBMENU =============
-int rtexSubSelected = 0;  // 0 = DAY, 1 = NIGHT
-int rtexVersion     = 0;  // 0 = DAY, 1 = NIGHT
+int rtexSubSelected = 0;
+int rtexVersion     = 0;
 
 // ============= MENU DESIGN CONSTANTS =============
 #define MENU_BG        0x0000
 #define MENU_HEADER_H  38
-#define MENU_ITEMS     10      // now 10 games
+#define MENU_ITEMS     11      // now 11 games
 #define MENU_PER_PAGE  6
 #define MENU_COLS      3
 #define MENU_ROWS      2
@@ -61,24 +62,24 @@ int rtexVersion     = 0;  // 0 = DAY, 1 = NIGHT
 
 int menuPage = 0;
 
-const uint16_t GAME_ACCENT[10] = {
-  0x07E0, 0xFFE0, 0xF81F, 0x837F, 0xFC00, 0x07FF, 0xF800, 0xFB9A, 0x02DF, 0xF7BE
+const uint16_t GAME_ACCENT[11] = {
+  0x07E0, 0xFFE0, 0xF81F, 0x837F, 0xFC00, 0x07FF, 0xF800, 0xFB9A, 0x02DF, 0xF7BE, 0x001F
 };
-const uint16_t GAME_DIM[10] = {
-  0x0140, 0x2200, 0x2006, 0x1012, 0x2100, 0x020A, 0x2000, 0x300A, 0x0109, 0x2104
+const uint16_t GAME_DIM[11] = {
+  0x0140, 0x2200, 0x2006, 0x1012, 0x2100, 0x020A, 0x2000, 0x300A, 0x0109, 0x2104, 0x0108
 };
-const char* GAME_NAMES[10] = {
-  "SNAKE","FLAPPY","CONNECT 4","TIC TAC","RPS","NINJA UP","PONG","SPERM","RACING","RTEX LITE"
+const char* GAME_NAMES[11] = {
+  "SNAKE","FLAPPY","CONNECT 4","TIC TAC","RPS","NINJA UP","PONG","SPERM","RACING","RTEX LITE","BRICKOUT"
 };
-const char* GAME_SUBTITLES[10] = {
+const char* GAME_SUBTITLES[11] = {
   "EAT & GROW","FLY & DODGE","CONNECT&BLOCK","THINK&PLACE",
-  "CHOOSE&DUEL","DODGE RUSH","RALLY & WIN","DODGE&SURVIVE","RACE&DODGE","DINO RUN"
+  "CHOOSE&DUEL","DODGE RUSH","RALLY & WIN","DODGE&SURVIVE","RACE&DODGE","DINO RUN","BREAK BRICKS"
 };
-const char* GAME_MODE_BADGE[10] = {
-  "1P","1P","BOT","BOT","BOT","1P","BOT","1P","1P","1P"
+const char* GAME_MODE_BADGE[11] = {
+  "1P","1P","BOT","BOT","BOT","1P","BOT","1P","1P","1P","1P"
 };
 
-int menuHighScores[10] = {0,0,0,0,0,0,0,0,0,0};
+int menuHighScores[11] = {0,0,0,0,0,0,0,0,0,0,0};
 
 // ============= FORWARD DECLARATIONS =============
 void showMenu();
@@ -98,6 +99,786 @@ void showRtexSubmenu();
 void updateRtexSubmenu(int oldSel, int newSel);
 void launchRtexVersion(int version);
 void rtexGameOver();
+// Brick Breaker declarations
+void initBrickBreaker();
+void runBrickBreaker();
+void showStartScreenBrickBreaker();
+
+// ================================================================
+// =================== BRICK BREAKER GAME =========================
+// ================================================================
+// --- Colors ---
+#define BB_COL_BG        TFT_BLACK
+#define BB_COL_PADDLE    TFT_CYAN
+#define BB_COL_BALL      TFT_WHITE
+#define BB_COL_TEXT      TFT_WHITE
+#define BB_COL_SCORE     TFT_YELLOW
+#define BB_COL_LIFE      TFT_RED
+#define BB_COL_BORDER    0x2104
+
+const uint16_t BB_BRICK_COLORS[] = {
+  TFT_RED, 0xFD20, TFT_YELLOW, TFT_GREEN, TFT_CYAN, 0x781F
+};
+
+// --- EEPROM ---
+#define BB_EEPROM_SIZE   4
+#define BB_HISCORE_ADDR  20  // Different address to avoid conflict
+
+// --- Game Constants ---
+#define BB_PADDLE_W      70
+#define BB_PADDLE_H      8
+#define BB_PADDLE_Y      (screenHeight - 10)
+#define BB_PADDLE_SPEED  6
+
+#define BB_BALL_SIZE     5
+#define BB_BALL_SPEED_INIT 2.5f
+
+#define BB_BRICK_COLS    10
+#define BB_BRICK_ROWS    6
+#define BB_BRICK_W       28
+#define BB_BRICK_H       12
+#define BB_BRICK_PAD_X   2
+#define BB_BRICK_PAD_Y   2
+#define BB_BRICK_OFFSET_X ((screenWidth - (BB_BRICK_COLS * (BB_BRICK_W + BB_BRICK_PAD_X) - BB_BRICK_PAD_X)) / 2)
+#define BB_BRICK_OFFSET_Y 30
+
+#define BB_MAX_LIVES     3
+#define BB_MAX_LEVELS    25
+
+// --- Brick ---
+struct BBBrick {
+  bool alive;
+  uint8_t hits;
+};
+
+// --- Game State ---
+enum BBGameState {
+  BB_STATE_TITLE,
+  BB_STATE_PLAYING,
+  BB_STATE_BALL_LOST,
+  BB_STATE_LEVEL_CLEAR,
+  BB_STATE_GAME_OVER
+};
+
+BBBrick bbBricks[BB_BRICK_ROWS][BB_BRICK_COLS];
+
+float   bbBallX, bbBallY;
+float   bbBallVX, bbBallVY;
+float   bbBallSpeed;
+int     bbPaddleX;
+int     bbScore;
+int     bbHiScore;
+int     bbLives;
+int     bbLevel;
+bool    bbBallLaunched;
+bool    bbPaused;
+BBGameState bbGameState;
+
+unsigned long bbLastFrame;
+unsigned long bbMsgTimer;
+
+bool bbBtnLeftPrev   = HIGH;
+bool bbBtnRightPrev  = HIGH;
+bool bbBtnSelectPrev = HIGH;
+
+// =============================================
+//  25 UNIQUE LEVEL MAPS
+// =============================================
+const uint8_t BB_LEVEL_MAPS[BB_MAX_LEVELS][BB_BRICK_ROWS][BB_BRICK_COLS] = {
+  // Level 1: Classic Rows
+  {
+    {1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1},
+    {0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 2: Checkerboard
+  {
+    {1,0,1,0,1,0,1,0,1,0},
+    {0,1,0,1,0,1,0,1,0,1},
+    {1,0,1,0,1,0,1,0,1,0},
+    {0,1,0,1,0,1,0,1,0,1},
+    {1,0,1,0,1,0,1,0,1,0},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 3: Diamond
+  {
+    {0,0,0,0,1,1,0,0,0,0},
+    {0,0,0,1,1,1,1,0,0,0},
+    {0,0,1,1,2,2,1,1,0,0},
+    {0,0,1,1,2,2,1,1,0,0},
+    {0,0,0,1,1,1,1,0,0,0},
+    {0,0,0,0,1,1,0,0,0,0},
+  },
+  // Level 4: Fortress
+  {
+    {2,2,2,2,2,2,2,2,2,2},
+    {2,0,0,0,0,0,0,0,0,2},
+    {2,0,1,1,1,1,1,1,0,2},
+    {2,0,1,0,0,0,0,1,0,2},
+    {2,0,1,1,1,1,1,1,0,2},
+    {2,0,0,0,0,0,0,0,0,2},
+  },
+  // Level 5: Full Hard
+  {
+    {2,2,2,2,2,2,2,2,2,2},
+    {2,1,2,1,2,1,2,1,2,2},
+    {2,2,1,2,1,2,1,2,1,2},
+    {1,2,2,2,2,2,2,2,2,1},
+    {2,1,2,1,2,1,2,1,2,2},
+    {2,2,2,2,2,2,2,2,2,2},
+  },
+  // Level 6: V-Shape
+  {
+    {1,0,0,0,0,0,0,0,0,1},
+    {1,1,0,0,0,0,0,0,1,1},
+    {1,1,1,0,0,0,0,1,1,1},
+    {1,1,1,1,0,0,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 7: X Cross
+  {
+    {1,0,0,0,1,1,0,0,0,1},
+    {0,1,0,1,0,0,1,0,1,0},
+    {0,0,2,0,0,0,0,2,0,0},
+    {0,1,0,1,0,0,1,0,1,0},
+    {1,0,0,0,1,1,0,0,0,1},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 8: Pyramid
+  {
+    {0,0,0,0,2,2,0,0,0,0},
+    {0,0,0,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,0,0},
+    {0,1,1,1,1,1,1,1,1,0},
+    {1,1,1,1,1,1,1,1,1,1},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 9: Stripes
+  {
+    {1,1,1,1,1,1,1,1,1,1},
+    {0,0,0,0,0,0,0,0,0,0},
+    {2,2,2,2,2,2,2,2,2,2},
+    {0,0,0,0,0,0,0,0,0,0},
+    {1,1,1,1,1,1,1,1,1,1},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 10: Cross
+  {
+    {0,0,0,0,2,2,0,0,0,0},
+    {0,0,0,0,2,2,0,0,0,0},
+    {1,1,1,1,2,2,1,1,1,1},
+    {1,1,1,1,2,2,1,1,1,1},
+    {0,0,0,0,2,2,0,0,0,0},
+    {0,0,0,0,2,2,0,0,0,0},
+  },
+  // Level 11: Corners
+  {
+    {2,2,2,0,0,0,0,2,2,2},
+    {2,0,0,0,0,0,0,0,0,2},
+    {2,0,0,0,0,0,0,0,0,2},
+    {2,0,0,0,0,0,0,0,0,2},
+    {2,0,0,0,0,0,0,0,0,2},
+    {2,2,2,0,0,0,0,2,2,2},
+  },
+  // Level 12: Arrow
+  {
+    {0,0,0,0,1,1,0,0,0,0},
+    {0,0,0,1,1,1,1,0,0,0},
+    {0,0,1,0,1,1,0,1,0,0},
+    {0,1,0,0,1,1,0,0,1,0},
+    {0,0,0,0,1,1,0,0,0,0},
+    {0,0,0,0,1,1,0,0,0,0},
+  },
+  // Level 13: Hourglass
+  {
+    {2,2,2,2,2,2,2,2,2,2},
+    {0,2,2,2,2,2,2,2,2,0},
+    {0,0,2,2,2,2,2,2,0,0},
+    {0,0,2,2,2,2,2,2,0,0},
+    {0,2,2,2,2,2,2,2,2,0},
+    {2,2,2,2,2,2,2,2,2,2},
+  },
+  // Level 14: Zigzag
+  {
+    {1,1,0,0,0,0,0,0,1,1},
+    {0,1,1,0,0,0,0,1,1,0},
+    {0,0,1,1,0,0,1,1,0,0},
+    {0,0,0,1,1,1,1,0,0,0},
+    {0,0,1,1,0,0,1,1,0,0},
+    {0,1,1,0,0,0,0,1,1,0},
+  },
+  // Level 15: Invaders
+  {
+    {0,1,0,0,1,1,0,0,1,0},
+    {0,0,1,1,1,1,1,1,0,0},
+    {0,1,1,2,1,1,2,1,1,0},
+    {0,1,1,1,1,1,1,1,1,0},
+    {0,0,0,1,0,0,1,0,0,0},
+    {0,0,1,0,0,0,0,1,0,0},
+  },
+  // Level 16: Diagonal Slash
+  {
+    {2,0,0,0,0,0,0,0,0,1},
+    {1,2,0,0,0,0,0,0,1,0},
+    {0,1,2,0,0,0,0,1,0,0},
+    {0,0,1,2,0,0,1,0,0,0},
+    {0,0,0,1,2,1,0,0,0,0},
+    {0,0,0,0,1,0,0,0,0,0},
+  },
+  // Level 17: Bullseye
+  {
+    {0,1,1,1,1,1,1,1,1,0},
+    {1,0,0,0,0,0,0,0,0,1},
+    {1,0,2,2,2,2,2,2,0,1},
+    {1,0,2,0,0,0,0,2,0,1},
+    {1,0,2,2,2,2,2,2,0,1},
+    {0,1,1,1,1,1,1,1,1,0},
+  },
+  // Level 18: Snake
+  {
+    {1,1,1,1,1,1,1,1,1,0},
+    {0,0,0,0,0,0,0,0,1,0},
+    {0,1,1,1,1,1,1,1,1,0},
+    {0,1,0,0,0,0,0,0,0,0},
+    {0,1,1,1,1,1,1,1,1,1},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 19: Columns
+  {
+    {1,0,1,0,1,0,1,0,1,0},
+    {1,0,1,0,1,0,1,0,1,0},
+    {2,0,2,0,2,0,2,0,2,0},
+    {2,0,2,0,2,0,2,0,2,0},
+    {1,0,1,0,1,0,1,0,1,0},
+    {1,0,1,0,1,0,1,0,1,0},
+  },
+  // Level 20: Dominos
+  {
+    {2,2,0,0,2,2,0,0,2,2},
+    {2,2,0,0,2,2,0,0,2,2},
+    {0,0,2,2,0,0,2,2,0,0},
+    {0,0,2,2,0,0,2,2,0,0},
+    {2,2,0,0,2,2,0,0,2,2},
+    {2,2,0,0,2,2,0,0,2,2},
+  },
+  // Level 21: Walled City
+  {
+    {2,0,2,0,2,2,0,2,0,2},
+    {2,0,2,0,2,2,0,2,0,2},
+    {2,2,2,2,2,2,2,2,2,2},
+    {1,0,0,1,0,0,1,0,0,1},
+    {1,0,0,1,0,0,1,0,0,1},
+    {0,0,0,0,0,0,0,0,0,0},
+  },
+  // Level 22: Star
+  {
+    {0,0,0,0,2,2,0,0,0,0},
+    {1,0,0,0,2,2,0,0,0,1},
+    {0,1,1,1,2,2,1,1,1,0},
+    {0,1,1,1,2,2,1,1,1,0},
+    {1,0,0,0,2,2,0,0,0,1},
+    {0,0,0,0,2,2,0,0,0,0},
+  },
+  // Level 23: Labyrinth
+  {
+    {2,2,2,2,0,0,2,2,2,2},
+    {2,0,0,2,0,0,2,0,0,2},
+    {2,0,2,2,2,2,2,2,0,2},
+    {2,0,2,0,0,0,0,2,0,2},
+    {2,0,0,0,2,2,0,0,0,2},
+    {2,2,2,2,2,2,2,2,2,2},
+  },
+  // Level 24: Chaos
+  {
+    {2,1,2,0,1,2,0,2,1,2},
+    {0,2,0,1,2,0,2,1,2,0},
+    {1,0,2,2,0,1,2,0,2,1},
+    {2,1,0,2,1,2,0,1,0,2},
+    {0,2,1,0,2,1,2,0,2,1},
+    {1,0,2,1,0,2,1,2,0,1},
+  },
+  // Level 25: Final Boss
+  {
+    {2,2,2,2,2,2,2,2,2,2},
+    {2,1,2,1,2,1,2,1,2,2},
+    {2,2,1,2,1,2,1,2,2,2},
+    {2,1,2,2,2,2,2,2,1,2},
+    {2,2,1,2,1,2,1,2,2,2},
+    {2,2,2,2,2,2,2,2,2,2},
+  },
+};
+
+// =============================================
+//  Brick Breaker EEPROM helpers
+// =============================================
+void bbLoadHiScore() {
+  EEPROM.begin(512);
+  bbHiScore = EEPROM.read(BB_HISCORE_ADDR) << 8;
+  bbHiScore |= EEPROM.read(BB_HISCORE_ADDR + 1);
+  if (bbHiScore > 99999) bbHiScore = 0;
+}
+
+void bbSaveHiScore() {
+  EEPROM.write(BB_HISCORE_ADDR,     (bbHiScore >> 8) & 0xFF);
+  EEPROM.write(BB_HISCORE_ADDR + 1, bbHiScore & 0xFF);
+  EEPROM.commit();
+}
+
+// =============================================
+//  Initialize Brick Breaker level
+// =============================================
+void bbInitLevel() {
+  int lv = (bbLevel - 1) % BB_MAX_LEVELS;
+  for (int r = 0; r < BB_BRICK_ROWS; r++) {
+    for (int c = 0; c < BB_BRICK_COLS; c++) {
+      bbBricks[r][c].hits  = BB_LEVEL_MAPS[lv][r][c];
+      bbBricks[r][c].alive = (bbBricks[r][c].hits > 0);
+    }
+  }
+  bbPaddleX    = (screenWidth - BB_PADDLE_W) / 2;
+  bbBallX      = bbPaddleX + BB_PADDLE_W / 2;
+  bbBallY      = BB_PADDLE_Y - BB_BALL_SIZE - 2;
+  bbBallSpeed  = BB_BALL_SPEED_INIT + (bbLevel - 1) * 0.2f;
+  if (bbBallSpeed > 7.0f) bbBallSpeed = 7.0f;
+  bbBallVX     = bbBallSpeed;
+  bbBallVY     = -bbBallSpeed;
+  bbBallLaunched = false;
+  bbPaused       = false;
+}
+
+void bbInitGame() {
+  bbScore = 0;
+  bbLives = BB_MAX_LIVES;
+  bbLevel = 1;
+  bbInitLevel();
+  bbGameState = BB_STATE_PLAYING;
+  tft.fillScreen(BB_COL_BG);
+  bbDrawHUD();
+  bbDrawBricks();
+  bbDrawPaddle(bbPaddleX, true);
+  bbDrawBall((int)bbBallX, (int)bbBallY, true);
+}
+
+// =============================================
+//  Brick Breaker Drawing helpers
+// =============================================
+void bbDrawPauseMessage() {
+  tft.setTextColor(TFT_RED);
+  tft.setTextSize(3);
+  tft.setCursor(115, 105);
+  tft.print("PAUSED");
+}
+
+void bbErasePauseMessage() {
+  tft.fillRoundRect(80, 90, 160, 50, 10, BB_COL_BG);
+  bbDrawHUD();
+}
+
+void bbDrawBrick(int c, int r) {
+  if (!bbBricks[r][c].alive) return;
+  int x = BB_BRICK_OFFSET_X + c * (BB_BRICK_W + BB_BRICK_PAD_X);
+  int y = BB_BRICK_OFFSET_Y + r * (BB_BRICK_H + BB_BRICK_PAD_Y);
+  uint16_t col = BB_BRICK_COLORS[r % 6];
+  if (bbBricks[r][c].hits == 1 && BB_LEVEL_MAPS[(bbLevel-1)%BB_MAX_LEVELS][r][c] == 2) {
+    col = tft.color565(
+      ((col >> 11) & 0x1F) * 12,
+      ((col >>  5) & 0x3F) * 6,
+      (col & 0x1F) * 12
+    );
+  }
+  tft.fillRect(x, y, BB_BRICK_W, BB_BRICK_H, col);
+  tft.drawFastHLine(x, y, BB_BRICK_W, TFT_WHITE);
+  tft.drawFastVLine(x, y, BB_BRICK_H, TFT_WHITE);
+  tft.drawFastHLine(x, y + BB_BRICK_H - 1, BB_BRICK_W, BB_COL_BG);
+  tft.drawFastVLine(x + BB_BRICK_W - 1, y, BB_BRICK_H, BB_COL_BG);
+}
+
+void bbEraseBrick(int c, int r) {
+  int x = BB_BRICK_OFFSET_X + c * (BB_BRICK_W + BB_BRICK_PAD_X);
+  int y = BB_BRICK_OFFSET_Y + r * (BB_BRICK_H + BB_BRICK_PAD_Y);
+  tft.fillRect(x, y, BB_BRICK_W, BB_BRICK_H, BB_COL_BG);
+}
+
+void bbDrawBricks() {
+  for (int r = 0; r < BB_BRICK_ROWS; r++)
+    for (int c = 0; c < BB_BRICK_COLS; c++)
+      if (bbBricks[r][c].alive)
+        bbDrawBrick(c, r);
+}
+
+void bbDrawPaddle(int x, bool show) {
+  tft.fillRoundRect(x, BB_PADDLE_Y, BB_PADDLE_W, BB_PADDLE_H,
+                    BB_PADDLE_H / 2, show ? BB_COL_PADDLE : BB_COL_BG);
+  if (show)
+    tft.drawFastHLine(x + 2, BB_PADDLE_Y + 1, BB_PADDLE_W - 4, TFT_WHITE);
+}
+
+void bbDrawBall(int x, int y, bool show) {
+  tft.fillCircle(x, y, BB_BALL_SIZE, show ? BB_COL_BALL : BB_COL_BG);
+}
+
+void bbDrawHUD() {
+  tft.fillRect(0, 0, screenWidth, 22, 0x2104);
+  tft.setTextColor(BB_COL_SCORE);
+  tft.setTextSize(1);
+  tft.setCursor(4, 7);
+  tft.print("SCR:");
+  tft.print(bbScore);
+
+  tft.setTextColor(TFT_MAGENTA);
+  tft.setCursor(screenWidth / 2 - 20, 7);
+  tft.print("LV:");
+  tft.print(bbLevel);
+  tft.print("/25");
+
+  tft.setCursor(screenWidth - 75, 7);
+  tft.setTextColor(BB_COL_LIFE);
+  tft.print("LIVES:");
+  for (int i = 0; i < BB_MAX_LIVES; i++) {
+    if (i < bbLives)
+      tft.fillCircle(screenWidth - 12 + (i - BB_MAX_LIVES + 1) * 10, 11, 3, BB_COL_LIFE);
+    else
+      tft.drawCircle(screenWidth - 12 + (i - BB_MAX_LIVES + 1) * 10, 11, 3, BB_COL_LIFE);
+  }
+}
+
+void bbDrawTitle() {
+  tft.fillScreen(BB_COL_BG);
+  for (int y = 0; y < screenHeight; y += 4)
+    tft.drawFastHLine(0, y, screenWidth, 0x0821);
+
+  tft.fillRoundRect(30, 30, 260, 60, 10, 0x1082);
+  tft.drawRoundRect(30, 30, 260, 60, 10, TFT_CYAN);
+
+  tft.setTextColor(TFT_CYAN);
+  tft.setTextSize(3);
+  tft.setCursor(55, 42);
+  tft.print("BRICK");
+  tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(155, 42);
+  tft.print("OUT");
+
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(72, 72);
+  tft.print("25 LEVELS  |  ESP32 + ILI9341");
+
+  tft.setTextColor(TFT_GREEN);
+  tft.setCursor(70, 108);
+  tft.print("LEFT/RIGHT - Move Paddle");
+  tft.setCursor(70, 122);
+  tft.print("SELECT     - Launch / Pause");
+
+  tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(95, 150);
+  tft.print("HI-SCORE: ");
+  tft.print(bbHiScore);
+
+  tft.setTextColor(TFT_CYAN);
+  tft.setCursor(80, 185);
+  tft.print("Press SELECT to Start!");
+}
+
+void bbDrawGameOver() {
+  for (int i = 0; i < 80; i++)
+    tft.drawFastHLine(40, 60 + i, 240, tft.color565(20 + i/4, 0, 0));
+
+  tft.fillRoundRect(38, 58, 244, 124, 15, TFT_BLACK);
+  tft.fillRoundRect(40, 60, 240, 120, 15, tft.color565(15, 0, 0));
+  tft.drawRoundRect(40, 60, 240, 120, 15, TFT_RED);
+
+  tft.setTextColor(TFT_RED);   tft.setTextSize(3);
+  tft.setCursor(68, 72);  tft.print("GAME");
+  tft.setTextColor(TFT_ORANGE);
+  tft.setCursor(142, 72); tft.print("OVER");
+
+  tft.drawFastHLine(70, 96, 180, TFT_RED);
+
+  tft.fillRoundRect(60, 102, 200, 25, 5, TFT_BLACK);
+  tft.drawRoundRect(60, 102, 200, 25, 5, TFT_CYAN);
+  tft.setTextColor(TFT_YELLOW); tft.setTextSize(2);
+  tft.setCursor(70, 108); tft.print("POINTS:");
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(170, 107); tft.print(bbScore);
+
+  if (bbScore >= bbHiScore) {
+    for (int i = 0; i < 3; i++) {
+      tft.setTextColor(TFT_YELLOW);
+      tft.setCursor(52, 133); tft.print("NEW HI-SCORE!");
+      delay(50);
+      tft.fillRect(52, 133, 190, 12, tft.color565(15, 0, 0));
+      delay(50);
+    }
+    tft.setTextColor(TFT_YELLOW);
+    tft.setCursor(52, 133); tft.print("NEW HI-SCORE!");
+  } else {
+    tft.setTextColor(TFT_CYAN);
+    tft.setCursor(65, 133); tft.print("HI-SCORE: ");
+    tft.setTextColor(TFT_YELLOW); tft.print(bbHiScore);
+  }
+
+  tft.fillRoundRect(70, 150, 180, 20, 8, tft.color565(0, 20, 0));
+  tft.drawRoundRect(70, 150, 180, 20, 8, TFT_GREEN);
+  tft.setTextColor(TFT_GREEN); tft.setTextSize(1);
+  tft.setCursor(85, 155); tft.print("PRESS SELECT TO RESTART");
+}
+
+void bbDrawLevelClear() {
+  tft.fillRect(50, 85, 220, 70, 0x1082);
+  tft.drawRect(50, 85, 220, 70, TFT_GREEN);
+  tft.setTextColor(TFT_GREEN); tft.setTextSize(2);
+  tft.setCursor(62, 95);  tft.print("LEVEL CLEAR!");
+  tft.setTextSize(1); tft.setTextColor(TFT_WHITE);
+  tft.setCursor(78, 120);
+  if (bbLevel < BB_MAX_LEVELS) {
+    tft.print("Level "); tft.print(bbLevel); tft.print(" -> "); tft.print(bbLevel+1);
+  } else {
+    tft.setTextColor(TFT_YELLOW);
+    tft.print("You Beat All 25 Levels!");
+  }
+  tft.setTextColor(0xAD75); tft.setCursor(100, 138); tft.print("Get ready...");
+}
+
+// =============================================
+//  Brick Breaker Collision: ball vs bricks
+// =============================================
+bool bbCheckBrickCollision() {
+  int bx = (int)bbBallX - BB_BALL_SIZE;
+  int by = (int)bbBallY - BB_BALL_SIZE;
+  int bw = BB_BALL_SIZE * 2;
+  int bh = BB_BALL_SIZE * 2;
+
+  for (int r = 0; r < BB_BRICK_ROWS; r++) {
+    for (int c = 0; c < BB_BRICK_COLS; c++) {
+      if (!bbBricks[r][c].alive) continue;
+
+      int rx = BB_BRICK_OFFSET_X + c * (BB_BRICK_W + BB_BRICK_PAD_X);
+      int ry = BB_BRICK_OFFSET_Y + r * (BB_BRICK_H + BB_BRICK_PAD_Y);
+
+      if (bx < rx + BB_BRICK_W && bx + bw > rx &&
+          by < ry + BB_BRICK_H && by + bh > ry) {
+
+        float overlapLeft  = (bx + bw) - rx;
+        float overlapRight = (rx + BB_BRICK_W) - bx;
+        float overlapTop   = (by + bh) - ry;
+        float overlapBot   = (ry + BB_BRICK_H) - by;
+        float minH = min(overlapLeft, overlapRight);
+        float minV = min(overlapTop, overlapBot);
+        if (minH < minV) bbBallVX = -bbBallVX;
+        else              bbBallVY = -bbBallVY;
+
+        bbBricks[r][c].hits--;
+        if (bbBricks[r][c].hits <= 0) {
+          bbBricks[r][c].alive = false;
+          bbEraseBrick(c, r);
+          bbScore += (r + 1) * 10 * bbLevel;
+        } else {
+          bbDrawBrick(c, r);
+        }
+        bbDrawHUD();
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool bbAllBricksCleared() {
+  for (int r = 0; r < BB_BRICK_ROWS; r++)
+    for (int c = 0; c < BB_BRICK_COLS; c++)
+      if (bbBricks[r][c].alive) return false;
+  return true;
+}
+
+// =============================================
+//  Brick Breaker Game update
+// =============================================
+void bbUpdateGame() {
+  bool leftNow  = digitalRead(BTN_LEFT);
+  bool rightNow = digitalRead(BTN_RIGHT);
+  bool selNow   = digitalRead(BTN_SELECT);
+
+  if (selNow == LOW && bbBtnSelectPrev == HIGH) {
+    if (!bbBallLaunched) {
+      bbBallLaunched = true;
+    } else {
+      bbPaused = !bbPaused;
+      if (bbPaused) bbDrawPauseMessage();
+      else        bbErasePauseMessage();
+    }
+  }
+  bbBtnSelectPrev = selNow;
+
+  if (bbPaused) return;
+
+  int oldPaddle = bbPaddleX;
+  if (leftNow  == LOW) bbPaddleX = max(0, bbPaddleX - BB_PADDLE_SPEED);
+  if (rightNow == LOW) bbPaddleX = min(screenWidth - BB_PADDLE_W, bbPaddleX + BB_PADDLE_SPEED);
+  if (oldPaddle != bbPaddleX) {
+    bbDrawPaddle(oldPaddle, false);
+    bbDrawPaddle(bbPaddleX, true);
+  }
+
+  if (!bbBallLaunched) {
+    int oldBX = (int)bbBallX, oldBY = (int)bbBallY;
+    bbBallX = bbPaddleX + BB_PADDLE_W / 2;
+    bbBallY = BB_PADDLE_Y - BB_BALL_SIZE - 1;
+    if ((int)bbBallX != oldBX || (int)bbBallY != oldBY) {
+      bbDrawBall(oldBX, oldBY, false);
+      bbDrawBall((int)bbBallX, (int)bbBallY, true);
+    }
+    return;
+  }
+
+  int oldBX = (int)bbBallX, oldBY = (int)bbBallY;
+  bbBallX += bbBallVX;
+  bbBallY += bbBallVY;
+
+  if (bbBallX - BB_BALL_SIZE < 0)       { bbBallX = BB_BALL_SIZE;        bbBallVX =  fabs(bbBallVX); }
+  if (bbBallX + BB_BALL_SIZE > screenWidth){ bbBallX = screenWidth-BB_BALL_SIZE; bbBallVX = -fabs(bbBallVX); }
+  if (bbBallY - BB_BALL_SIZE < 22)      { bbBallY = 22 + BB_BALL_SIZE;   bbBallVY =  fabs(bbBallVY); }
+
+  if (bbBallY + BB_BALL_SIZE >= BB_PADDLE_Y &&
+      bbBallY - BB_BALL_SIZE <= BB_PADDLE_Y + BB_PADDLE_H &&
+      bbBallX >= bbPaddleX && bbBallX <= bbPaddleX + BB_PADDLE_W &&
+      bbBallVY > 0) {
+    float rel   = (bbBallX - (bbPaddleX + BB_PADDLE_W / 2.0f)) / (BB_PADDLE_W / 2.0f);
+    float angle = rel * 60.0f * (PI / 180.0f);
+    float spd   = sqrt(bbBallVX * bbBallVX + bbBallVY * bbBallVY);
+    bbBallVX = spd * sin(angle);
+    bbBallVY = -spd * cos(angle);
+    if (fabs(bbBallVX) < 0.5f) bbBallVX = (bbBallVX >= 0 ? 0.5f : -0.5f);
+    bbBallY = BB_PADDLE_Y - BB_BALL_SIZE - 1;
+  }
+
+  bbCheckBrickCollision();
+
+  if (bbBallY + BB_BALL_SIZE > screenHeight) {
+    bbLives--;
+    bbDrawHUD();
+    if (bbLives <= 0) {
+      if (bbScore > bbHiScore) { bbHiScore = bbScore; bbSaveHiScore(); menuHighScores[10] = bbHiScore; }
+      bbGameState = BB_STATE_GAME_OVER;
+      bbDrawGameOver();
+      bbMsgTimer = millis();
+      return;
+    }
+    bbGameState = BB_STATE_BALL_LOST;
+    tft.setTextColor(TFT_ORANGE); tft.setTextSize(3);
+    tft.setCursor(90, 105); tft.print("BALL LOST!");
+    return;
+  }
+
+  if ((int)bbBallX != oldBX || (int)bbBallY != oldBY) {
+    bbDrawBall(oldBX, oldBY, false);
+    bbDrawBall((int)bbBallX, (int)bbBallY, true);
+  }
+
+  if (bbAllBricksCleared()) {
+    bbLevel++;
+    bbGameState = BB_STATE_LEVEL_CLEAR;
+    bbDrawLevelClear();
+    bbMsgTimer = millis();
+  }
+}
+
+// =============================================
+//  Brick Breaker Start Screen
+// =============================================
+void showStartScreenBrickBreaker() {
+  bbLoadHiScore();
+  bbGameState = BB_STATE_TITLE;
+  bbDrawTitle();
+}
+
+// =============================================
+//  Brick Breaker Main Loop
+// =============================================
+void runBrickBreaker() {
+  static unsigned long lastBPress = 0;
+  
+  if (digitalRead(BTN_B) == LOW && millis() - lastBPress > 300) {
+    lastBPress = millis();
+    returnToMenu();
+    return;
+  }
+
+  unsigned long now = millis();
+
+  switch (bbGameState) {
+
+    case BB_STATE_TITLE: {
+      static bool blinkOn = false;
+      static unsigned long blinkT = 0;
+      if (now - blinkT > 600) {
+        blinkT = now; blinkOn = !blinkOn;
+        tft.setTextSize(1);
+        tft.setTextColor(blinkOn ? TFT_CYAN : BB_COL_BG);
+        tft.setCursor(80, 185);
+        tft.print("Press SELECT to Start!");
+      }
+      bool selNow = digitalRead(BTN_SELECT);
+      if (selNow == LOW && bbBtnSelectPrev == HIGH) bbInitGame();
+      bbBtnSelectPrev = selNow;
+      break;
+    }
+
+    case BB_STATE_PLAYING:
+      if (now - bbLastFrame >= 16) { bbLastFrame = now; bbUpdateGame(); }
+      break;
+
+    case BB_STATE_BALL_LOST: {
+      bool selNow = digitalRead(BTN_SELECT);
+      if (selNow == LOW && bbBtnSelectPrev == HIGH) {
+        tft.fillRect(0, 22, screenWidth, screenHeight - 22, BB_COL_BG);
+        bbPaddleX    = (screenWidth - BB_PADDLE_W) / 2;
+        bbBallX      = bbPaddleX + BB_PADDLE_W / 2;
+        bbBallY      = BB_PADDLE_Y - BB_BALL_SIZE - 2;
+        bbBallSpeed  = BB_BALL_SPEED_INIT + (bbLevel - 1) * 0.2f;
+        if (bbBallSpeed > 7.0f) bbBallSpeed = 7.0f;
+        bbBallVX     = bbBallSpeed;
+        bbBallVY     = -bbBallSpeed;
+        bbBallLaunched = false;
+        bbPaused       = false;
+        bbDrawBricks();
+        bbDrawPaddle(bbPaddleX, true);
+        bbDrawBall((int)bbBallX, (int)bbBallY, true);
+        bbDrawHUD();
+        bbGameState = BB_STATE_PLAYING;
+      }
+      bbBtnSelectPrev = selNow;
+      break;
+    }
+
+    case BB_STATE_LEVEL_CLEAR:
+      if (now - bbMsgTimer > 2500) {
+        tft.fillRect(0, 22, screenWidth, screenHeight - 22, BB_COL_BG);
+        bbInitLevel();
+        bbDrawBricks();
+        bbDrawPaddle(bbPaddleX, true);
+        bbDrawBall((int)bbBallX, (int)bbBallY, true);
+        bbDrawHUD();
+        bbGameState = BB_STATE_PLAYING;
+      }
+      break;
+
+    case BB_STATE_GAME_OVER: {
+      bool selNow = digitalRead(BTN_SELECT);
+      if (selNow == LOW && bbBtnSelectPrev == HIGH) {
+        bbGameState = BB_STATE_TITLE;
+        bbDrawTitle();
+      }
+      bbBtnSelectPrev = selNow;
+      break;
+    }
+
+    default: break;
+  }
+}
 
 // ================================================================
 // =================== SNAKE VARIABLES ============================
@@ -125,7 +906,7 @@ bool bonusActive = false;
 unsigned long bonusStartTime;
 
 // ================================================================
-// =================== FLAPPY VARIABLES (shared) ==================
+// =================== FLAPPY VARIABLES ==========================
 // ================================================================
 #define MAX_DOTS 30
 struct Dot { float x, y, speed; int brightness; };
@@ -737,7 +1518,7 @@ float rtexSavedBumpX[3];
 int   rtexSavedCactusType;
 
 // EEPROM
-#define RTEX_EEPROM_ADDR  10   // offset away from other games
+#define RTEX_EEPROM_ADDR  10
 #define RTEX_EEPROM_MAGIC 12
 
 // ============= RTEX BITMAP DRAW HELPER =============
@@ -953,14 +1734,12 @@ void runRtexGame() {
   static unsigned long lastSelectPress = 0;
   static unsigned long lastBPress      = 0;
 
-  // B → back to RTEX submenu
   if(digitalRead(BTN_B)==LOW && millis()-lastBPress>300) {
     lastBPress = millis();
     rtexPlaying = false; rtexIsPaused = false;
     showRtexSubmenu(); return;
   }
 
-  // START → pause / resume
   if(rtexPlaying && digitalRead(BTN_START)==LOW && millis()-lastStartPress>300) {
     lastStartPress = millis();
     if(!rtexIsPaused) {
@@ -973,7 +1752,6 @@ void runRtexGame() {
 
   if(rtexIsPaused) { delay(50); return; }
 
-  // Show menu / start
   if(!rtexPlaying) {
     if(digitalRead(BTN_SELECT)==LOW && millis()-lastSelectPress>300) {
       lastSelectPress = millis();
@@ -982,7 +1760,6 @@ void runRtexGame() {
     return;
   }
 
-  // Jump
   static unsigned long lastSel = 0;
   if((digitalRead(BTN_SELECT)==LOW||digitalRead(BTN_A)==LOW)
      && !rtexIsJumping && millis()-lastSel>RTEX_JUMP_DEBOUNCE) {
@@ -1052,7 +1829,6 @@ void showRtexSubmenu() {
 
   tft.fillScreen(0x0000);
 
-  // Header
   tft.fillRect(0,0,320,36,0x0008);
   tft.drawFastHLine(0,36,320,0xF7BE);
   tft.setTextSize(2); tft.setTextColor(0xF7BE);
@@ -1060,7 +1836,6 @@ void showRtexSubmenu() {
   tft.setTextSize(1); tft.setTextColor(0x2945);
   tft.setCursor(10,28); tft.print("Choose your version");
 
-  // Footer
   tft.drawFastHLine(0,224,320,0x1082);
   tft.fillRect(0,225,320,15,0x0008);
   tft.setTextSize(1); tft.setTextColor(0x3186);
@@ -1085,13 +1860,11 @@ void showRtexSubmenu() {
       tft.drawRoundRect(8,cy,304,72,6,0x1082);
     }
 
-    // Big number badge
     tft.fillCircle(38,cy+36,20,sel?vAccent[i]:(uint16_t)0x1082);
     tft.setTextSize(2);
     tft.setTextColor(sel?(uint16_t)0x0000:(uint16_t)0x2945);
     tft.setCursor(31,cy+28); tft.print(i+1);
 
-    // Name & subtitle
     tft.setTextSize(2);
     tft.setTextColor(sel?vAccent[i]:(uint16_t)0x528A);
     tft.setCursor(68,cy+16); tft.print(vNames[i]);
@@ -1099,13 +1872,11 @@ void showRtexSubmenu() {
     tft.setTextColor(sel?(uint16_t)0x3186:(uint16_t)0x2104);
     tft.setCursor(68,cy+38); tft.print(vSubtitles[i]);
 
-    // Hi score
     tft.setTextColor(sel?vAccent[i]:(uint16_t)0x2104);
     tft.setCursor(68,cy+52);
     char sb[16]; sprintf(sb,"HI: %04d", rtexHighScore);
     tft.print(sb);
 
-    // Arrow
     if(sel) tft.fillTriangle(298,cy+28,298,cy+44,306,cy+36,vAccent[i]);
   }
 }
@@ -1150,7 +1921,6 @@ void updateRtexSubmenu(int oldSel, int newSel) {
 void launchRtexVersion(int version) {
   rtexVersion = version;
   currentGame = GAME_RTEX;
-  // Show start screen
   if(version==0) { rtexBgColor=RTEX_DAY_BG;  rtexFgColor=RTEX_DAY_FG; }
   else           { rtexBgColor=RTEX_NIGHT_BG; rtexFgColor=RTEX_NIGHT_FG; }
   tft.fillScreen(rtexBgColor);
@@ -1193,7 +1963,7 @@ void drawMenuChrome() {
   tft.setTextSize(2); tft.setTextColor(0x07FF);
   tft.setCursor(18,8); tft.print("ARCADE");
   tft.setTextSize(1); tft.setTextColor(0x2945);
-  tft.setCursor(18,26); tft.print("10 GAMES  v5.0  ESP32");
+  tft.setCursor(18,26); tft.print("11 GAMES  v5.0  ESP32");
   for(int i=0;i<4;i++)
     tft.fillCircle(screenWidth-16-i*9,19,3,(i==0)?0xF800:(i==1)?0xFFE0:(i==2)?0x07E0:0x07FF);
   tft.drawFastVLine(screenWidth-6,4,28,0x2124);
@@ -1288,7 +2058,6 @@ void drawMenuCard(int idx, bool active) {
       tft.fillRect(iconCX+5,iconCY-4,2,5,ic);
       tft.fillRect(iconCX-3,iconCY-4,6,5,active?iconBg:(uint16_t)MENU_BG); break;
     case 9:
-      // Dino icon for RTEX LITE
       tft.fillRect(iconCX-5,iconCY-8,8,10,ic);
       tft.fillRect(iconCX-7,iconCY-6,3,4,ic);
       tft.fillRect(iconCX+3,iconCY-2,5,4,ic);
@@ -1296,6 +2065,16 @@ void drawMenuCard(int idx, bool active) {
       tft.fillRect(iconCX-7,iconCY+4,3,2,ic);
       tft.fillRect(iconCX+3,iconCY+4,3,2,ic);
       tft.drawPixel(iconCX+1,iconCY-7,active?iconBg:(uint16_t)MENU_BG); break;
+    case 10:  // Brick Breaker Icon - Brick Wall
+      tft.fillRect(iconCX-9,iconCY-6,18,4,ic);
+      tft.fillRect(iconCX-9,iconCY,18,4,ic);
+      tft.fillRect(iconCX-9,iconCY+6,18,4,ic);
+      for(int i=0;i<3;i++) {
+        tft.fillRect(iconCX-9+i*6,iconCY-2,2,12,ic);
+      }
+      tft.fillCircle(iconCX,iconCY+12,5,ic);
+      tft.fillCircle(iconCX,iconCY+12,2,TFT_WHITE);
+      break;
   }
 
   tft.setTextSize(1);
@@ -1705,7 +2484,7 @@ void setup(){
   tft.setTextColor(0xFFE0); tft.setTextSize(2);
   tft.setCursor(85,125); tft.print("CONSOLE");
   tft.setTextColor(0x2945); tft.setTextSize(1);
-  tft.setCursor(85,155); tft.print("10 GAMES  v5.0");
+  tft.setCursor(85,155); tft.print("11 GAMES  v5.0");
   for(int i=0;i<4;i++)
     tft.fillCircle(130+i*16,175,3,(i==0)?0xF800:(i==1)?0xFFE0:(i==2)?0x07E0:0x07FF);
   delay(1800);
@@ -1764,7 +2543,8 @@ void loop(){
           case 6: currentGame=GAME_PONG;      showStartScreenPong();    break;
           case 7: currentGame=GAME_SPERMRACE; showStartScreenSperm();   break;
           case 8: currentGame=GAME_CARRACING; showStartScreenCar();     break;
-          case 9: showRtexSubmenu();                                     break; // RTEX LITE
+          case 9: showRtexSubmenu();                                     break;
+          case 10: currentGame=GAME_BRICKBREAKER; showStartScreenBrickBreaker(); break;
         }
       }
       break;
@@ -1811,6 +2591,9 @@ void loop(){
 
     // ── RTEX GAME ─────────────────────────────────────────────
     case GAME_RTEX: runRtexGame(); break;
+    
+    // ── BRICK BREAKER ─────────────────────────────────────────
+    case GAME_BRICKBREAKER: runBrickBreaker(); break;
 
     case GAME_SNAKE:     runSnakeGame();      break;
     case GAME_CONNECT4:  runConnect4Game();   break;
