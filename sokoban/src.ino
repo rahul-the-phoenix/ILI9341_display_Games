@@ -47,20 +47,21 @@ TFT_eSPI tft = TFT_eSPI();
 #define C_WALL     0x9C92
 #define C_WALL_H   0xCE59
 #define C_WALL_S   0x6B4D
-#define C_TARGET   0xFD20
+#define C_TARGET   TFT_RED // 0xFD20
 #define C_BOX      0xC5A0
 #define C_BOX_H    0xEF1C
 #define C_BOX_S    0x8340
 #define C_BOXON    0x07E0
 #define C_BOXON_H  0x87F0
-#define C_PLAYER   0x001F      // Blue
-#define C_PLAYER_H 0x5CFF      // Light blue highlight
-#define C_PLAYER_S 0x0010      // Dark blue shadow
-#define C_PLTON    0xF81F      // Pink for player on target
-#define C_PLTON_H  0xFCFF      // Light pink highlight
+#define C_PLAYER   0xFD20      // Gold/Yellow for happy emoji
+#define C_PLAYER_H 0xFFE0      // Light yellow highlight
+#define C_PLAYER_S 0x8400      // Dark yellow shadow
+#define C_PLTON    0xFE00      // Orange-red for player on target
+#define C_PLTON_H  0xFF80      // Light orange highlight
+#define C_CHEEK    0xF81F      // Pink for cheeks
 #define C_UI_BG    0x0010
 #define C_UI_TXT   0xFFFF
-#define C_UI_ACC   0xFD20      // Gold
+#define C_UI_ACC   0xFD20
 
 // ─── EEPROM ───────────────────────────────────────────────────────
 #define EEPROM_SIZE        64
@@ -358,61 +359,42 @@ unsigned long lastBtnTime[8] = {0};
 const unsigned long DEBOUNCE = 160;
 bool prevState[8] = {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH};
 
-// ─── Draw player (improved) ──────────────────────────────────────
-void drawPlayer(int16_t x, int16_t y, int16_t T, bool onTarget) {
+// ─── Draw Happy Emoji Player (Fixed - no fillArc) ─────────────────
+// ─── Draw Happy Emoji Player (Simple version) ────────────────────
+// ─── Draw Happy Emoji Player (Simple version with much lower smile) ────
+void drawHappyEmoji(int16_t x, int16_t y, int16_t T, bool onTarget) {
   uint16_t mainColor = onTarget ? C_PLTON : C_PLAYER;
-  uint16_t highlight = onTarget ? C_PLTON_H : C_PLAYER_H;
-  uint16_t shadow = C_PLAYER_S;
   
-  int cx = x + T/2;
-  int cy = y + T/2;
-  int headR = max(3, T/4);
-  int bodyW = max(3, T/3);
-  int bodyH = max(4, T/3);
+  int cx = x + T/2;      // Center X
+  int cy = y + T/2;      // Center Y
+  int faceR = max(4, T/3);      // Face radius
+  int eyeSize = max(1, T/8);     // Eye size
   
-  // Body (shirt)
-  tft.fillRect(cx - bodyW/2, cy - bodyH/4, bodyW, bodyH, mainColor);
+  // ========== 1. Draw circular face ==========
+  tft.fillCircle(cx, cy, faceR, mainColor);
+  tft.drawCircle(cx, cy, faceR, C_BLACK);
   
-  // Highlight on body
-  tft.drawFastHLine(cx - bodyW/2 + 1, cy - bodyH/4 + 1, bodyW - 2, highlight);
+  // ========== 2. Eyes (simple circles) ==========
+  int eyeOffset = faceR/3;
   
-  // Head
-  tft.fillCircle(cx, cy - bodyH/4 - headR/2, headR, mainColor);
+  // Left eye
+  tft.fillCircle(cx - eyeOffset, cy - faceR/4, eyeSize, C_BLACK);
   
-  // Face details
-  if (T >= 12) {
-    // Eyes
-    tft.fillCircle(cx - headR/3, cy - bodyH/4 - headR/2 - 1, max(1, headR/5), C_WHITE);
-    tft.fillCircle(cx + headR/3, cy - bodyH/4 - headR/2 - 1, max(1, headR/5), C_WHITE);
-    tft.fillCircle(cx - headR/3, cy - bodyH/4 - headR/2 - 1, max(1, headR/8), C_BLACK);
-    tft.fillCircle(cx + headR/3, cy - bodyH/4 - headR/2 - 1, max(1, headR/8), C_BLACK);
-    
-    // Smile
-    tft.drawArc(cx, cy - bodyH/4 - headR/3, headR/2, headR/3, 0, 180, mainColor, C_FLOOR2);
-    
-    // Hair
-    tft.fillRect(cx - headR/2, cy - bodyH/4 - headR, headR, headR/3, shadow);
-  }
+  // Right eye
+  tft.fillCircle(cx + eyeOffset, cy - faceR/4, eyeSize, C_BLACK);
   
-  // Arms
-  if (T >= 10) {
-    tft.drawFastVLine(cx - bodyW/2 - 1, cy - bodyH/8, bodyH/2, mainColor);
-    tft.drawFastVLine(cx + bodyW/2 + 1, cy - bodyH/8, bodyH/2, mainColor);
-  }
+  // ========== 3. Happy Mouth (smile curve - very low position) ==========
+  int smileY = cy + faceR/3;  // Changed from faceR/4 to faceR/3 (even lower)
+  int smileWidth = faceR/2;
   
-  // Legs
-  if (T >= 10) {
-    int legY = cy + bodyH/4;
-    tft.drawFastVLine(cx - bodyW/4, legY, bodyH/2, mainColor);
-    tft.drawFastVLine(cx + bodyW/4, legY, bodyH/2, mainColor);
-    
-    // Shoes
-    tft.fillRect(cx - bodyW/4 - 1, legY + bodyH/2, bodyW/4 + 1, max(2, T/8), shadow);
-    tft.fillRect(cx + 1, legY + bodyH/2, bodyW/4 + 1, max(2, T/8), shadow);
+  // Draw smile curve
+  for (int i = -smileWidth; i <= smileWidth; i++) {
+    int offsetY = abs(i) / 3;
+    tft.drawPixel(cx + i, smileY + offsetY, C_BLACK);
   }
 }
 
-// ─── Draw one tile (improved with better player) ─────────────────
+// ─── Draw one tile (improved with happy emoji player) ────────────
 void drawTile(int8_t r, int8_t c) {
   uint8_t  t  = board[r][c];
   int16_t  x  = boardOffX + c * TILE;
@@ -434,7 +416,6 @@ void drawTile(int8_t r, int8_t c) {
       break;
     }
     case T_FLOOR: {
-      // Patterned floor
       tft.fillRect(x, y, T, T, C_FLOOR2);
       if (T >= 10) {
         tft.drawPixel(x + T/2, y + T/2, 0x3186);
@@ -446,7 +427,6 @@ void drawTile(int8_t r, int8_t c) {
     case T_TARGET: {
       tft.fillRect(x, y, T, T, C_FLOOR2);
       int m = max(2, T/5);
-      // Animated target (rings)
       tft.drawRect(x+m, y+m, T-2*m, T-2*m, C_TARGET);
       if (T >= 12) {
         tft.drawRect(x+m+2, y+m+2, T-2*m-4, T-2*m-4, C_TARGET);
@@ -463,7 +443,6 @@ void drawTile(int8_t r, int8_t c) {
       tft.drawFastHLine(x+1,   y+T-2, T-2, C_BOX_S);
       tft.drawFastVLine(x+T-2, y+1,   T-2, C_BOX_S);
       if (T >= 10) {
-        // Wood grain pattern
         tft.drawFastHLine(x+3, y+T/2, T-6, C_BOX_S);
         tft.drawFastHLine(x+4, y+T/2+1, T-8, 0x2104);
       }
@@ -476,7 +455,6 @@ void drawTile(int8_t r, int8_t c) {
       tft.drawFastVLine(x+1, y+1, T-2, C_BOXON_H);
       if (T >= 10) {
         tft.drawFastHLine(x+3, y+T/2, T-6, C_BOXON_H);
-        // Glow effect
         tft.drawCircle(x+T/2, y+T/2, T/3, 0x07FF);
       }
       tft.drawRect(x, y, T, T, C_FLOOR2);
@@ -498,8 +476,8 @@ void drawTile(int8_t r, int8_t c) {
           tft.drawPixel(x + T/2, y + T/2, 0x3186);
         }
       }
-      // Draw improved player
-      drawPlayer(x, y, T, (t == T_PTON));
+      // Draw happy emoji player
+      drawHappyEmoji(x, y, T, (t == T_PTON));
       break;
     }
     default:
@@ -534,7 +512,7 @@ void drawHUD() {
   sprintf(buf, "LV:%02d", currentLevel + 1);
   tft.print(buf);
   
-  // Level bar
+  // Level progress bar
   tft.fillRect(50, 4, 100, 12, 0x2104);
   tft.fillRect(50, 4, (currentLevel + 1) * 5, 12, C_UI_ACC);
 
@@ -609,6 +587,18 @@ void loadLevel(int lvl) {
   }
 
   computeLayout();
+  
+  // Force a complete redraw of player after layout change
+  if (px != -1 && py != -1) {
+    // Ensure player is drawn correctly after layout change
+    uint8_t playerType = board[py][px];
+    if (playerType == T_PLAYER || playerType == T_PTON) {
+      // Redraw player with new TILE size
+      int16_t x = boardOffX + px * TILE;
+      int16_t y = boardOffY + py * TILE;
+      drawHappyEmoji(x, y, TILE, (playerType == T_PTON));
+    }
+  }
 }
 
 // ─── Count boxes on targets ───────────────────────────────────────
@@ -749,7 +739,7 @@ void showWinScreen() {
   }
 }
 
-// ─── Title screen (improved) ─────────────────────────────────────
+// ─── Title screen (improved with happy emoji) ────────────────────
 void showTitleScreen() {
   tft.fillScreen(C_FLOOR);
   
@@ -774,7 +764,7 @@ void showTitleScreen() {
   tft.setTextColor(C_BOXON); tft.setTextSize(1);
   tft.setCursor(78, 80); tft.print("Push boxes onto targets!");
 
-  // Enhanced game demo
+  // Game demo with happy emoji
   int dx = 40, dy = 100;
   tft.fillRect(dx, dy, 18, 18, C_WALL);
   tft.drawFastHLine(dx, dy, 18, C_WALL_H);
@@ -784,13 +774,13 @@ void showTitleScreen() {
   tft.drawRect(dx+51, dy+3, 12, 12, C_TARGET);
   tft.fillRect(dx+72, dy, 18, 18, C_BOXON);
   tft.fillRect(dx+96, dy, 18, 18, C_FLOOR2);
-  drawPlayer(dx+96, dy, 18, false);
+  drawHappyEmoji(dx+96, dy, 18, false);
   tft.fillRect(dx+120, dy, 18, 18, C_FLOOR2);
   tft.drawRect(dx+123, dy+3, 12, 12, C_TARGET);
-  drawPlayer(dx+120, dy, 18, true);
+  drawHappyEmoji(dx+120, dy, 18, true);
 
   tft.setTextColor(0x7BEF); tft.setTextSize(1);
-  tft.setCursor(55, 121); tft.print("Wall Box Target Done Player P-on-T");
+  tft.setCursor(35, 121); tft.print("Wall Box Target Done Player P-on-T");
 
   tft.setTextColor(C_UI_TXT); tft.setTextSize(1);
   tft.setCursor(15, 148);
@@ -840,7 +830,7 @@ void showLevelSelect() {
       tft.setTextColor(sel ? C_FLOOR : C_BOXON);
       sprintf(buf, "%3d", bestMoves[i]);
       tft.setCursor(bx+8, by+30); tft.print(buf);
-      // Star for completed
+      // Star for completed levels
       tft.setTextColor(C_UI_ACC);
       tft.setCursor(bx+44, by+28); tft.print("★");
     } else {
