@@ -2,6 +2,11 @@
  * =====================================================================
  *  SOKOBAN  —  ILI9341 TFT (TFT_eSPI) — 20 Stages
  *  Display : 320x240
+ *  Button Mapping:
+ *    A        = Undo
+ *    B        = Exit to Menu (from gameplay)
+ *    SELECT   = Confirm / Next Level
+ *    START    = Restart level
  * =====================================================================
  */
 
@@ -639,7 +644,7 @@ void showWinScreen() {
   }
 
   tft.setTextSize(1); tft.setTextColor(0x07FF);
-  tft.setCursor(38, 165); tft.print("[A] Next Level   [B] Level Select");
+  tft.setCursor(38, 165); tft.print("[SEL] Next Level   [B] Menu");
 
   if (currentLevel == NUM_STAGES - 1) {
     tft.setTextColor(C_UI_ACC); tft.setTextSize(2);
@@ -689,7 +694,7 @@ void showTitleScreen() {
 
   tft.setTextColor(C_UI_TXT); tft.setTextSize(1);
   tft.setCursor(28, 148);
-  tft.print("UP/DN/LR:Move  A:Undo  SEL:Menu  STA:Restart");
+  tft.print("UP/DN/LR:Move  A:Undo  B:Menu  SEL:Confirm  STA:Restart");
   tft.setCursor(28, 162); tft.print("20 handcrafted levels. Good luck!");
 
   tft.setTextColor(C_UI_ACC); tft.setTextSize(2);
@@ -703,7 +708,7 @@ void showLevelSelect() {
   tft.fillRect(0, 0, SCR_W, 18, C_UI_BG);
   tft.drawFastHLine(0, 18, SCR_W, C_UI_ACC);
   tft.setTextColor(C_UI_ACC); tft.setTextSize(1);
-  tft.setCursor(80, 5); tft.print("SELECT LEVEL  (A=Play  B=Back)");
+  tft.setCursor(80, 5); tft.print("SELECT LEVEL  (SEL=Play  B=Back)");
 
   for (int i = 0; i < NUM_STAGES; i++) {
     int col = i % 5;
@@ -802,7 +807,7 @@ void loop() {
     if (btnPressed(B_DOWN)  && levelSelectCursor < 15)  { levelSelectCursor += 5; showLevelSelect(); }
     if (btnPressed(B_LEFT)  && levelSelectCursor > 0)   { levelSelectCursor--;    showLevelSelect(); }
     if (btnPressed(B_RIGHT) && levelSelectCursor < 19)  { levelSelectCursor++;    showLevelSelect(); }
-    if (btnPressed(B_A)) {
+    if (btnPressed(B_SELECT)) {
       onLevelSelect = false;
       currentLevel  = levelSelectCursor;
       loadLevel(currentLevel);
@@ -818,7 +823,7 @@ void loop() {
   }
 
   if (levelComplete) {
-    if (btnPressed(B_A)) {
+    if (btnPressed(B_SELECT)) {
       if (currentLevel < NUM_STAGES - 1) {
         currentLevel++;
         loadLevel(currentLevel);
@@ -848,8 +853,8 @@ void loop() {
     return;
   }
 
-  // Reset to menu with SELECT button
-  if (btnPressed(B_SELECT)) {
+  // Exit to menu with B button (changed from SELECT)
+  if (btnPressed(B_B)) {
     onTitleScreen = true;
     onLevelSelect = false;
     levelComplete = false;
